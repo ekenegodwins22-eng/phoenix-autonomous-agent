@@ -35,6 +35,7 @@ Render's free web service is for testing: it sleeps after inactivity and its loc
 3. Sign in, then submit a simple task such as `Open https://example.com and tell me the page title`.
 4. Check `/mailbox/health` in the UI. If it fails, verify the mailbox API's current auth/session requirements and set the matching environment variable.
 5. Confirm `/docs` loads and the `/tasks` endpoints require a bearer token.
+6. If a task reaches `waiting_human`, verify the response includes `human_help`, complete only the authorized human step, then call `POST /tasks/{id}/resume` and confirm the task reports a new progress state.
 
 
 ## Model selection update

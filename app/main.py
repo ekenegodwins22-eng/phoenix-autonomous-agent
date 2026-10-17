@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from app.config import settings
 from app.models import TaskRequest, TaskStatus, now_utc
-from app.runner import execute_task
+from app.runner import HumanInterventionRequired, execute_task
 from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
 from app.providers import available_models
@@ -137,7 +137,7 @@ async def models(user=Depends(current_user)):
 @app.post("/tasks", response_model=TaskStatus, status_code=202)
 async def create_task(request: TaskRequest, user=Depends(current_user)):
     task_id = uuid.uuid4().hex[:12]
-    item = {"id":task_id,"owner_id":user['id'],"instruction":request.instruction,"status":"queued","progress":"Queued; waiting for the single execution slot.","created_at":now_utc(),"updated_at":now_utc(),"result":None,"error":None,"provider":request.provider,"model":request.model}
+    item = {"id":task_id,"owner_id":user['id'],"instruction":request.instruction,"start_url":request.start_url,"timeout_seconds":request.timeout_seconds,"status":"queued","progress":"Queued; waiting for the single execution slot.","human_help":None,"created_at":now_utc(),"updated_at":now_utc(),"result":None,"error":None,"provider":request.provider,"model":request.model}
     async with task_lock:
         tasks[task_id] = item
         while len(tasks) > settings.max_task_history: tasks.popitem(last=False)
@@ -155,10 +155,24 @@ async def run_task(task_id, request):
         try:
             item['result'] = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress), timeout=request.timeout_seconds or settings.task_timeout_seconds)
             item['progress']='Task completed with verified actions.'; item['status']='completed'
+        except HumanInterventionRequired as exc:
+            item['error']=str(exc)[:400]; item['human_help']='Complete the challenge manually, then call POST /tasks/{id}/resume.'; item['progress']='Paused for required human verification.'; item['status']='waiting_human'
         except Exception as exc:
             logging.exception('Task %s failed', task_id)
-            item['error']=f"{type(exc).__name__}: {str(exc)[:400]}"; item['progress']='Task failed; see the error for details.'; item['status']='failed'
+            item['error']=f"{type(exc).__name__}: {str(exc)[:400]}"; item['human_help']=None; item['progress']='Task failed; see the error for details.'; item['status']='failed'
         finally: item['updated_at']=now_utc()
+
+@app.post("/tasks/{task_id}/resume", response_model=TaskStatus, status_code=202)
+async def resume_task(task_id: str, user=Depends(current_user)):
+    item = tasks.get(task_id)
+    if not item or item.get('owner_id') != user['id']:
+        raise HTTPException(status_code=404, detail="Task not found or history expired")
+    if item.get('status') != 'waiting_human':
+        raise HTTPException(status_code=409, detail="Task is not waiting for human verification")
+    item['status']='queued'; item['progress']='Queued to resume after human verification.'; item['error']=None; item['human_help']=None; item['updated_at']=now_utc()
+    request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'))
+    asyncio.create_task(run_task(task_id, request))
+    return snapshot(item)
 
 @app.get("/tasks", response_model=list[TaskStatus])
 async def list_tasks(user=Depends(current_user)):

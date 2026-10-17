@@ -78,6 +78,32 @@ def test_mailbox_identifiers_reject_path_traversal():
         MailboxClient._identifier('../secret', 'message ID')
 
 
+def test_runner_detects_captcha_without_attempting_bypass():
+    from app.runner import _challenge_hint
+    assert _challenge_hint('Please complete the reCAPTCHA challenge', [])
+    assert _challenge_hint('Normal page content', []) is None
+
+
+def test_task_status_supports_human_handoff():
+    from app.models import TaskStatus, now_utc
+    task = TaskStatus(id='task1', instruction='verify', status='waiting_human', progress='Paused', human_help='Complete CAPTCHA', created_at=now_utc(), updated_at=now_utc())
+    assert task.status == 'waiting_human'
+    assert task.human_help == 'Complete CAPTCHA'
+
+
+def test_browser_retry_recovers_from_transient_failure():
+    import asyncio
+    from app.runner import _browser_retry
+    attempts = {'count': 0}
+    async def operation():
+        attempts['count'] += 1
+        if attempts['count'] == 1:
+            raise RuntimeError('temporary')
+        return 'ok'
+    assert asyncio.run(_browser_retry(operation)) == 'ok'
+    assert attempts['count'] == 2
+
+
 def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     import asyncio
     import httpx

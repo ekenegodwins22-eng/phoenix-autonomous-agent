@@ -1,10 +1,20 @@
-import json, re
+import asyncio, json, re
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 from app.browser import browser
 from app.providers import chat
 from app.mailbox import mailbox
 from app.config import settings
+
+class HumanInterventionRequired(RuntimeError):
+    """Raised when a page requires a human challenge or access-control decision."""
+
+
+def _challenge_hint(body: str, controls: list[dict]) -> str | None:
+    text = f"{body} {' '.join(str(control) for control in controls)}".lower()
+    if any(term in text for term in ("captcha", "recaptcha", "hcaptcha", "cloudflare turnstile", "verify you are human", "i'm not a robot")):
+        return "A CAPTCHA or human-verification challenge is present. Complete it manually, then resume the task."
+    return None
 
 SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. Use the mailbox tool when a task needs a fresh email alias or inbox messages. Keep account passwords and tokens out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
 
@@ -19,7 +29,7 @@ async def _snapshot(page):
     try:
         controls = await page.locator('input,textarea,select,button,[role=button],[role=link]').evaluate_all("els => els.slice(0,100).map((e,i)=>({i,tag:e.tagName.toLowerCase(),type:e.type||'',text:(e.innerText||e.value||e.getAttribute('aria-label')||'').trim().slice(0,100),name:e.name||'',id:e.id||'',placeholder:e.placeholder||'',label:e.labels?.[0]?.innerText||'',required:!!e.required,href:e.href||''}))")
     except Exception: controls = []
-    return {"url": page.url, "title": await page.title(), "body": body, "controls": controls}
+    return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_hint(body, controls)}
 
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
     prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
@@ -42,6 +52,17 @@ async def _locate(page, target):
         except Exception: pass
     return page.locator(target).first
 
+async def _browser_retry(operation, attempts=2):
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return await operation()
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.25 * (attempt + 1))
+    raise last_error
+
 async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None):
     async def report(message):
         if progress:
@@ -57,11 +78,13 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     async with browser.session() as page:
         if url:
             await report(f"Opening {url}")
-            await page.goto(url, wait_until='domcontentloaded')
+            await _browser_retry(lambda: page.goto(url, wait_until='domcontentloaded'))
             history.append({"tool":"goto", "url":page.url, "result":"navigation complete"})
         for step in range(1, settings.max_agent_steps + 1):
             await report(f"Choosing action {step}/{settings.max_agent_steps}")
             state = await _snapshot(page) if page.url else {"url":"", "title":"", "body":"No page open yet. Use goto with an explicit URL from the task, or ask user for target URL.", "controls":[]}
+            if state.get("challenge"):
+                raise HumanInterventionRequired(state["challenge"])
             action, provider, used_model = await _choose_action(instruction, history, state, step, provider_choice, model)
             used_providers.append(provider)
             used_models.append(used_model)
@@ -70,16 +93,16 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 if name == 'goto':
                     target_url = str(action.get('url',''))
                     if not valid_url(target_url): raise ValueError('goto requires a valid http/https URL')
-                    await page.goto(target_url, wait_until='domcontentloaded')
+                    await _browser_retry(lambda: page.goto(target_url, wait_until='domcontentloaded'))
                     result = {"url":page.url,"title":await page.title()}
                 elif name == 'click':
-                    loc = await _locate(page, str(action.get('target',''))); await loc.click(); result = {"clicked":action.get('target'),"url":page.url}
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(loc.click); result = {"clicked":action.get('target'),"url":page.url}
                 elif name == 'fill':
-                    loc = await _locate(page, str(action.get('target',''))); await loc.fill(str(action.get('value',''))); result = {"filled":action.get('target'),"value":"[redacted]"}
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(str(action.get('value','')))); result = {"filled":action.get('target'),"value":"[redacted]"}
                 elif name == 'select':
-                    loc = await _locate(page, str(action.get('target',''))); await loc.select_option(str(action.get('value',''))); result = {"selected":action.get('target')}
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.select_option(str(action.get('value','')))); result = {"selected":action.get('target')}
                 elif name == 'press':
-                    loc = await _locate(page, str(action.get('target',''))); await loc.press(str(action.get('key','Enter'))); result = {"pressed":action.get('key','Enter'),"target":action.get('target')}
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.press(str(action.get('key','Enter')))); result = {"pressed":action.get('key','Enter'),"target":action.get('target')}
                 elif name == 'wait':
                     await page.wait_for_timeout(max(0, min(int(action.get('milliseconds',500)),5000))); result = {"waited_ms":max(0,min(int(action.get('milliseconds',500)),5000))}
                 elif name == 'inspect': result = await _snapshot(page)

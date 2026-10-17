@@ -15,8 +15,9 @@ class TaskRequest(BaseModel):
 class TaskStatus(BaseModel):
     id: str
     instruction: str
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "waiting_human", "completed", "failed"]
     progress: str | None = None
+    human_help: str | None = None
     created_at: datetime
     updated_at: datetime
     result: str | None = None

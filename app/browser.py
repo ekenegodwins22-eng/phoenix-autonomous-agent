@@ -25,6 +25,10 @@ class SingleBrowser:
                 ])
                 context = await browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=True)
                 page = await context.new_page()
+                async def dismiss_dialog(dialog):
+                    log.info("Dismissing browser dialog of type %s", dialog.type)
+                    await dialog.dismiss()
+                page.on("dialog", dismiss_dialog)
                 page.set_default_timeout(settings.browser_action_timeout_ms)
                 page.set_default_navigation_timeout(settings.browser_navigation_timeout_ms)
                 yield page
