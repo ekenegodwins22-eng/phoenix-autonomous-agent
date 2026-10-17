@@ -61,6 +61,7 @@ Protected endpoints:
 - `GET /mailbox/messages/{message_id}/attachments/{attachment_id}`
 
 The browser agent can also call the mailbox health/accounts/aliases/create-alias/message actions while executing a task. It uses the configured TempNest API, not SMTP.
+For authorized email verification workflows, the agent can call `mailbox_find_verification_code(pattern)`; it scans recent messages and returns only the matched code and minimal message metadata, never the full message body.
 
 ## Browser lifecycle and resource use
 

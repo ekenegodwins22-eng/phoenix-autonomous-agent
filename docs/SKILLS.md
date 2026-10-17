@@ -34,6 +34,7 @@ The model receives the user's task, recent action history, and a snapshot of the
 | `mailbox_messages` | `alias_id` | List messages for an alias. |
 | `mailbox_list_messages` | none | List mailbox messages. |
 | `mailbox_get_message` | `message_id` | Retrieve one message. |
+| `mailbox_find_verification_code` | optional `pattern` | Scan authorized mailbox messages and return only a matched verification code plus minimal metadata. |
 | `mailbox_attachment` | `message_id`, `attachment_id` | Retrieve one documented message attachment. |
 
 ## Recovery and human handoff
@@ -41,6 +42,7 @@ The model receives the user's task, recent action history, and a snapshot of the
 - Browser navigation and common controls retry once after a transient failure.
 - JavaScript dialogs are dismissed so they do not deadlock the task loop.
 - CAPTCHA and human-verification indicators are detected from visible page text and controls.
+- Detected challenges are classified as reCAPTCHA, hCaptcha, Cloudflare Turnstile, or generic human verification, with site-accessible alternatives reported when visible.
 - A detected challenge pauses the task with status `waiting_human`; the user must complete the challenge through an authorized human interaction and call `POST /tasks/{id}/resume`.
 - The agent never solves, bypasses, or claims success for a CAPTCHA automatically. The resume endpoint starts a fresh controlled browser run, so the challenge must be available through the configured browser/session workflow.
 

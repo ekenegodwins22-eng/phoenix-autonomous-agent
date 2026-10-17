@@ -79,8 +79,11 @@ def test_mailbox_identifiers_reject_path_traversal():
 
 
 def test_runner_detects_captcha_without_attempting_bypass():
-    from app.runner import _challenge_hint
+    from app.runner import _challenge_hint, _challenge_info
     assert _challenge_hint('Please complete the reCAPTCHA challenge', [])
+    info = _challenge_info('reCAPTCHA offers an audio accessibility challenge', [])
+    assert info['type'] == 'recaptcha'
+    assert 'authorized_site_accessible_alternative' in info['resolution_methods']
     assert _challenge_hint('Normal page content', []) is None
 
 
@@ -102,6 +105,18 @@ def test_browser_retry_recovers_from_transient_failure():
         return 'ok'
     assert asyncio.run(_browser_retry(operation)) == 'ok'
     assert attempts['count'] == 2
+
+
+def test_mailbox_finds_verification_code_without_returning_message_body():
+    import asyncio
+    from app.mailbox import MailboxClient
+    client = MailboxClient()
+    async def messages(**kwargs):
+        return [{'id': 7, 'subject': 'Your verification code', 'body_text': 'Use 482931 to continue.'}]
+    client.list_messages = messages
+    result = asyncio.run(client.find_verification_code())
+    assert result == {'code': '482931', 'message_id': 7, 'subject': 'Your verification code'}
+    assert 'body_text' not in result
 
 
 def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):

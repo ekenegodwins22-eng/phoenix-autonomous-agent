@@ -83,6 +83,20 @@ class MailboxClient:
     async def get_message(self, message_id: str):
         return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}')
 
+    async def find_verification_code(self, pattern: str = r"\b\d{4,8}\b"):
+        """Return the newest numeric verification code without returning message contents."""
+        messages = await self.list_messages(params={"limit": 50, "offset": 0})
+        rows = messages if isinstance(messages, list) else messages.get("messages", []) if isinstance(messages, dict) else []
+        code_pattern = re.compile(pattern)
+        for message in rows:
+            if not isinstance(message, dict):
+                continue
+            haystack = " ".join(str(message.get(key) or "") for key in ("subject", "snippet", "body_text"))
+            match = code_pattern.search(haystack)
+            if match:
+                return {"code": match.group(0), "message_id": message.get("id"), "subject": str(message.get("subject") or "")[:160]}
+        return None
+
     async def get_attachment(self, message_id: str, attachment_id: str):
         return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}/attachments/{self._identifier(attachment_id, "attachment ID")}')
 

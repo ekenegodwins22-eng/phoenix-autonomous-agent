@@ -10,13 +10,29 @@ class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
 
 
-def _challenge_hint(body: str, controls: list[dict]) -> str | None:
+def _challenge_info(body: str, controls: list[dict]) -> dict | None:
     text = f"{body} {' '.join(str(control) for control in controls)}".lower()
-    if any(term in text for term in ("captcha", "recaptcha", "hcaptcha", "cloudflare turnstile", "verify you are human", "i'm not a robot")):
-        return "A CAPTCHA or human-verification challenge is present. Complete it manually, then resume the task."
+    if "hcaptcha" in text:
+        challenge_type = "hcaptcha"
+    elif "recaptcha" in text:
+        challenge_type = "recaptcha"
+    elif "turnstile" in text or "cloudflare" in text:
+        challenge_type = "cloudflare_turnstile"
+    elif any(term in text for term in ("captcha", "verify you are human", "i'm not a robot")):
+        challenge_type = "generic_human_verification"
+    else:
+        return None
+    methods = ["authorized_site_accessible_alternative"] if "audio" in text or "accessibility" in text else []
+    methods.append("human_completion")
+    return {"type": challenge_type, "resolution_methods": methods, "message": f"Detected {challenge_type}; use an authorized resolution method, then resume the task."}
+
+def _challenge_hint(body: str, controls: list[dict]) -> str | None:
+    info = _challenge_info(body, controls)
+    if info:
+        return info["message"]
     return None
 
-SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. Use the mailbox tool when a task needs a fresh email alias or inbox messages. Keep account passwords and tokens out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
+SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. Use the mailbox tool when a task needs a fresh email alias, inbox messages, or a verification code. Keep account passwords and tokens out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_find_verification_code(pattern), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
 
 
 def valid_url(url):
@@ -29,7 +45,7 @@ async def _snapshot(page):
     try:
         controls = await page.locator('input,textarea,select,button,[role=button],[role=link]').evaluate_all("els => els.slice(0,100).map((e,i)=>({i,tag:e.tagName.toLowerCase(),type:e.type||'',text:(e.innerText||e.value||e.getAttribute('aria-label')||'').trim().slice(0,100),name:e.name||'',id:e.id||'',placeholder:e.placeholder||'',label:e.labels?.[0]?.innerText||'',required:!!e.required,href:e.href||''}))")
     except Exception: controls = []
-    return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_hint(body, controls)}
+    return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_info(body, controls)}
 
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
     prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
@@ -84,7 +100,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
             await report(f"Choosing action {step}/{settings.max_agent_steps}")
             state = await _snapshot(page) if page.url else {"url":"", "title":"", "body":"No page open yet. Use goto with an explicit URL from the task, or ask user for target URL.", "controls":[]}
             if state.get("challenge"):
-                raise HumanInterventionRequired(state["challenge"])
+                raise HumanInterventionRequired(json.dumps(state["challenge"], ensure_ascii=False))
             action, provider, used_model = await _choose_action(instruction, history, state, step, provider_choice, model)
             used_providers.append(provider)
             used_models.append(used_model)
@@ -119,6 +135,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 elif name == 'mailbox_messages': result = await mailbox.list_alias_messages(str(action.get('alias_id','')))
                 elif name == 'mailbox_list_messages': result = await mailbox.list_messages()
                 elif name == 'mailbox_get_message': result = await mailbox.get_message(str(action.get('message_id','')))
+                elif name == 'mailbox_find_verification_code': result = await mailbox.find_verification_code(str(action.get('pattern', r'\b\d{4,8}\b')))
                 elif name == 'mailbox_attachment': result = await mailbox.get_attachment(str(action.get('message_id','')), str(action.get('attachment_id','')))
                 elif name == 'done':
                     summary = str(action.get('summary','Task loop finished.'))
