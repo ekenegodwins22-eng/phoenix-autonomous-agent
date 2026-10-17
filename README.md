@@ -61,7 +61,8 @@ Protected endpoints:
 - `GET /mailbox/messages/{message_id}/attachments/{attachment_id}`
 
 The browser agent can also call the mailbox health/accounts/aliases/create-alias/message actions while executing a task. It uses the configured TempNest API, not SMTP.
-For authorized email verification workflows, the agent can call `mailbox_find_verification_code(pattern)`; it scans recent messages and returns only the matched code and minimal message metadata, never the full message body.
+For authorized email verification workflows, the agent can call `mailbox_fill_verification_code(target, pattern, alias_id)`; it scans the associated messages and fills only the target field, never placing the OTP in task history or summaries. It can similarly open a verification link through `mailbox_open_verification_link(alias_id)` with the URL redacted from history.
+When a registration needs an email address, `mailbox_prepare_email` first inspects active aliases and Gmail accounts, reuses a suitable active alias when possible, and otherwise creates a supported variation. It associates the alias ID and Gmail account ID with the task context, fills the form directly, and verifies delivery through the corresponding alias messages. Gmail dotted variations are treated as routes to the same underlying inbox, not separate accounts.
 
 When the user explicitly authorizes generated registration values, the agent can call `generate_credential` for a username or password and `fill_generated` to place it in the requested form. Generated values are held only in volatile task memory, are redacted from action history and summaries, and are not presented as verified identity information. The agent does not generate identity documents or eligibility claims.
 

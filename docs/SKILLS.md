@@ -37,6 +37,10 @@ The model receives the user's task, recent action history, and a snapshot of the
 | `mailbox_find_verification_code` | optional `pattern` | Scan authorized mailbox messages and return only a matched verification code plus minimal metadata. |
 | `mailbox_attachment` | `message_id`, `attachment_id` | Retrieve one documented message attachment. |
 
+`mailbox_prepare_email` inspects active aliases and Gmail accounts before reusing or creating an address. It records the alias and Gmail-account identifiers in volatile task context and fills the requested page field without returning the address in model history. Supported strategies include `dots`, `plus`, `googlemail`, and `combined`; dotted Gmail variations are not treated as independent inboxes.
+
+`mailbox_fill_verification_code` and `mailbox_open_verification_link` use the associated alias when available. They fill or navigate directly and redact OTPs and tokenized URLs from task history.
+
 ## Authorized random values
 
 | Action | Parameters | Purpose |

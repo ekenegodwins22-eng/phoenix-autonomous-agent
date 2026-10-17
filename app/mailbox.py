@@ -29,6 +29,13 @@ class MailboxClient:
             raise MailboxError(f"Invalid mailbox {field}")
         return value
 
+    @staticmethod
+    def _email(value: str) -> str:
+        value = str(value or "").strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise MailboxError("Invalid mailbox email")
+        return value
+
     async def request(self, method: str, path: str, *, params=None, payload=None):
         if not self.base:
             raise MailboxError("MAILBOX_API_BASE_URL is not configured")
@@ -48,7 +55,7 @@ class MailboxClient:
         return await self.request('GET', '/session')
 
     async def restore_session(self, alias_email: str):
-        return await self.request('POST', '/session/restore', payload={'alias_email': self._identifier(alias_email, 'email')})
+        return await self.request('POST', '/session/restore', payload={'alias_email': self._email(alias_email)})
 
     async def recover_session(self, payload=None):
         return await self.request('POST', '/session/recovery', payload=payload or {})
@@ -74,6 +81,29 @@ class MailboxClient:
             if value is not None: body[key] = value
         return await self.request('POST', '/aliases', payload=body)
 
+    async def prepare_address(self, *, variation_type='dots', address_type='alias', gmail_account_id=None):
+        """Reuse an active alias, otherwise create one using the live API contract."""
+        supported = {'dots', 'plus', 'googlemail', 'combined', 'googlemail_dot', 'googlemail_alias', 'googlemail_combined'}
+        if variation_type not in supported:
+            raise MailboxError(f"Unsupported email variation: {variation_type}")
+        aliases = await self.list_aliases()
+        rows = aliases if isinstance(aliases, list) else aliases.get('aliases', []) if isinstance(aliases, dict) else []
+        active = [row for row in rows if isinstance(row, dict) and row.get('is_active', True) and row.get('address')]
+        if gmail_account_id is not None:
+            active = [row for row in active if str(row.get('gmail_account_id')) == str(gmail_account_id)]
+        if active:
+            row = active[0]
+            return {'address': row['address'], 'alias_id': row.get('id'), 'gmail_account_id': row.get('gmail_account_id'), 'reused': True, 'variation_type': variation_type}
+        accounts = await self.list_accounts()
+        account_rows = accounts if isinstance(accounts, list) else accounts.get('accounts', []) if isinstance(accounts, dict) else []
+        selected_account = gmail_account_id
+        if selected_account is None and account_rows:
+            selected_account = account_rows[0].get('id') if isinstance(account_rows[0], dict) else None
+        created = await self.create_alias(address_type=address_type, variation_type=variation_type, gmail_account_id=selected_account)
+        if not isinstance(created, dict) or not created.get('address'):
+            raise MailboxError('Mailbox API did not return a usable alias address')
+        return {'address': created['address'], 'alias_id': created.get('id'), 'gmail_account_id': created.get('gmail_account_id', selected_account), 'reused': False, 'variation_type': variation_type}
+
     async def list_alias_messages(self, alias_id: str, params=None):
         return await self.request('GET', f'/aliases/{self._identifier(alias_id, "alias ID")}/messages', params=params)
 
@@ -83,9 +113,9 @@ class MailboxClient:
     async def get_message(self, message_id: str):
         return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}')
 
-    async def find_verification_code(self, pattern: str = r"\b\d{4,8}\b"):
+    async def find_verification_code(self, pattern: str = r"\b\d{4,8}\b", alias_id: str | None = None):
         """Return the newest numeric verification code without returning message contents."""
-        messages = await self.list_messages(params={"limit": 50, "offset": 0})
+        messages = await (self.list_alias_messages(alias_id, params={"limit": 50, "offset": 0}) if alias_id else self.list_messages(params={"limit": 50, "offset": 0}))
         rows = messages if isinstance(messages, list) else messages.get("messages", []) if isinstance(messages, dict) else []
         code_pattern = re.compile(pattern)
         for message in rows:
@@ -95,6 +125,20 @@ class MailboxClient:
             match = code_pattern.search(haystack)
             if match:
                 return {"code": match.group(0), "message_id": message.get("id"), "subject": str(message.get("subject") or "")[:160]}
+        return None
+
+    async def find_verification_link(self, alias_id: str | None = None):
+        """Return only a likely verification URL and minimal metadata."""
+        messages = await (self.list_alias_messages(alias_id, params={"limit": 50, "offset": 0}) if alias_id else self.list_messages(params={"limit": 50, "offset": 0}))
+        rows = messages if isinstance(messages, list) else messages.get('messages', []) if isinstance(messages, dict) else []
+        url_pattern = re.compile(r"https?://[^\s<>\"']+")
+        for message in rows:
+            if not isinstance(message, dict):
+                continue
+            haystack = " ".join(str(message.get(key) or "") for key in ('subject', 'snippet', 'body_text', 'body_html'))
+            links = [url.rstrip(').,;') for url in url_pattern.findall(haystack)]
+            if links:
+                return {'url': links[0], 'message_id': message.get('id'), 'subject': str(message.get('subject') or '')[:160]}
         return None
 
     async def get_attachment(self, message_id: str, attachment_id: str):

@@ -33,7 +33,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. Use the mailbox tool when a task needs a fresh email alias, inbox messages, or a verification code. Keep account passwords, tokens, cookies, and verification codes out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_find_verification_code(pattern), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
+SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. When an email address is required, use mailbox_prepare_email(target,variation_type,address_type,gmail_account_id) to reuse or create a supported alias after inspecting accounts and aliases. Use mailbox_fill_verification_code(target,pattern,alias_id) or mailbox_open_verification_link(alias_id) for authorized inbox verification. Keep account passwords, tokens, cookies, OTPs, and verification URLs out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. Do not attempt to bypass CAPTCHA or access controls."""
 
 
 def valid_url(url):
@@ -93,6 +93,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     used_providers = []
     used_models = []
     generated_credentials = {}
+    mailbox_context = {}
     async with browser.session() as page:
         browser.current_task_id = task_id
         if url:
@@ -135,6 +136,11 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     credential_name = str(action.get('name','')).strip()
                     if credential_name not in generated_credentials: raise ValueError('No generated credential exists with that name')
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(generated_credentials[credential_name])); result = {"filled":action.get('target'),"value":"[redacted]","credential":"[redacted]"}
+                elif name == 'mailbox_prepare_email':
+                    prepared = await mailbox.prepare_address(variation_type=str(action.get('variation_type','dots')), address_type=str(action.get('address_type','alias')), gmail_account_id=action.get('gmail_account_id'))
+                    mailbox_context.update(prepared)
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(prepared['address']))
+                    result = {"filled":action.get('target'),"alias_id":prepared.get('alias_id'),"gmail_account_id":prepared.get('gmail_account_id'),"reused":prepared.get('reused'),"variation_type":prepared.get('variation_type')}
                 elif name == 'select':
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.select_option(str(action.get('value','')))); result = {"selected":action.get('target')}
                 elif name == 'press':
@@ -155,7 +161,16 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 elif name == 'mailbox_messages': result = await mailbox.list_alias_messages(str(action.get('alias_id','')))
                 elif name == 'mailbox_list_messages': result = await mailbox.list_messages()
                 elif name == 'mailbox_get_message': result = await mailbox.get_message(str(action.get('message_id','')))
-                elif name == 'mailbox_find_verification_code': result = await mailbox.find_verification_code(str(action.get('pattern', r'\b\d{4,8}\b')))
+                elif name == 'mailbox_fill_verification_code':
+                    verification = await mailbox.find_verification_code(str(action.get('pattern', r'\b\d{4,8}\b')), str(action.get('alias_id') or mailbox_context.get('alias_id')) if (action.get('alias_id') or mailbox_context.get('alias_id')) else None)
+                    if not verification: raise ValueError('No verification code was found in the authorized mailbox')
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(verification['code']))
+                    result = {"filled":action.get('target'),"message_id":verification.get('message_id'),"value":"[redacted]"}
+                elif name == 'mailbox_open_verification_link':
+                    verification = await mailbox.find_verification_link(str(action.get('alias_id') or mailbox_context.get('alias_id')) if (action.get('alias_id') or mailbox_context.get('alias_id')) else None)
+                    if not verification: raise ValueError('No verification link was found in the authorized mailbox')
+                    await _browser_retry(lambda: page.goto(verification['url'], wait_until='domcontentloaded'))
+                    result = {"opened":True,"message_id":verification.get('message_id'),"url":"[redacted]"}
                 elif name == 'mailbox_attachment': result = await mailbox.get_attachment(str(action.get('message_id','')), str(action.get('attachment_id','')))
                 elif name == 'done':
                     summary = str(action.get('summary','Task loop finished.'))

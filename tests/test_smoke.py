@@ -130,6 +130,29 @@ def test_random_credentials_have_expected_properties():
     assert len(username) <= 26
 
 
+def test_mailbox_prepare_address_reuses_active_alias():
+    import asyncio
+    from app.mailbox import MailboxClient
+    client = MailboxClient()
+    async def aliases():
+        return [{'id': 12, 'address': 'alias@example.com', 'is_active': True, 'gmail_account_id': 3}]
+    async def accounts():
+        raise AssertionError('accounts should not be queried when a suitable alias exists')
+    client.list_aliases = aliases
+    client.list_accounts = accounts
+    result = asyncio.run(client.prepare_address(variation_type='plus'))
+    assert result['address'] == 'alias@example.com'
+    assert result['alias_id'] == 12
+    assert result['reused'] is True
+
+
+def test_mailbox_restore_session_validates_email():
+    import pytest
+    from app.mailbox import MailboxClient, MailboxError
+    with pytest.raises(MailboxError):
+        MailboxClient._email('not-an-email')
+
+
 def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     import asyncio
     import httpx
