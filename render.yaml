@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: phoenix-autonomous-agent
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PRIMARY_BASE_URL
+        value: https://concerned-swordfish-suhailtechlnfo-01fd2de0.koyeb.app
+      - key: PRIMARY_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODELS
+        value: gemini-2.5-flash,gemini-2.5-pro
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /app/data/phoenix.db
+      - key: MAILBOX_API_BASE_URL
+        value: https://gmail-alias-api.senseiphoenix.name.ng
+      - key: MAILBOX_API_TOKEN
+        sync: false
+      - key: MAILBOX_API_COOKIE
+        sync: false
