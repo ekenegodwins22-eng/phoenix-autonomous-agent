@@ -37,6 +37,15 @@ The model receives the user's task, recent action history, and a snapshot of the
 | `mailbox_find_verification_code` | optional `pattern` | Scan authorized mailbox messages and return only a matched verification code plus minimal metadata. |
 | `mailbox_attachment` | `message_id`, `attachment_id` | Retrieve one documented message attachment. |
 
+## Authorized random values
+
+| Action | Parameters | Purpose |
+| --- | --- | --- |
+| `generate_credential` | `name`, `kind`, optional `length`, `prefix` | Generate a username or password in volatile task memory when the user authorized random values. |
+| `fill_generated` | `target`, `name` | Fill a browser field from a generated value without exposing the value to task history or model output. |
+
+Generated credentials are task-scoped and are discarded when execution ends. They are not identity verification, and the agent does not fabricate identity documents or claims.
+
 ## Recovery and human handoff
 
 - Browser navigation and common controls retry once after a transient failure.

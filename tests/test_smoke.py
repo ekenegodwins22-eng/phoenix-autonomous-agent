@@ -119,6 +119,17 @@ def test_mailbox_finds_verification_code_without_returning_message_body():
     assert 'body_text' not in result
 
 
+def test_random_credentials_have_expected_properties():
+    from app.credentials import generate_password, generate_username
+    password = generate_password(20)
+    username = generate_username('My App')
+    assert len(password) == 20
+    assert any(character.isupper() for character in password)
+    assert any(character.isdigit() for character in password)
+    assert username.startswith('myapp_')
+    assert len(username) <= 26
+
+
 def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     import asyncio
     import httpx

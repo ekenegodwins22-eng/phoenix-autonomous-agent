@@ -63,6 +63,8 @@ Protected endpoints:
 The browser agent can also call the mailbox health/accounts/aliases/create-alias/message actions while executing a task. It uses the configured TempNest API, not SMTP.
 For authorized email verification workflows, the agent can call `mailbox_find_verification_code(pattern)`; it scans recent messages and returns only the matched code and minimal message metadata, never the full message body.
 
+When the user explicitly authorizes generated registration values, the agent can call `generate_credential` for a username or password and `fill_generated` to place it in the requested form. Generated values are held only in volatile task memory, are redacted from action history and summaries, and are not presented as verified identity information. The agent does not generate identity documents or eligibility claims.
+
 ## Browser lifecycle and resource use
 
 Tasks are queued and run sequentially. Chromium is headless, launches with background services disabled, and the browser session is closed in a `finally` block after completion, failure, or cancellation. When human verification is required, the active page remains open and can be inspected through the authenticated screenshot/browser-action endpoints. `MAX_AGENT_STEPS` caps the action loop. Navigation and common browser controls retry once after transient errors, and ordinary JavaScript dialogs are dismissed. The agent uses semantic labels/placeholders before CSS selectors and redacts form values from action history. CAPTCHA and human-verification indicators are detected; the task pauses with `waiting_human` rather than attempting a bypass. No automated CAPTCHA solver is included.

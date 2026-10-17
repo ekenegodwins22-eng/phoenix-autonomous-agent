@@ -5,6 +5,7 @@ from app.browser import browser
 from app.providers import chat
 from app.mailbox import mailbox
 from app.config import settings
+from app.credentials import generate_value
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -32,7 +33,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. Use the mailbox tool when a task needs a fresh email alias, inbox messages, or a verification code. Keep account passwords and tokens out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_find_verification_code(pattern), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
+SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. Use the mailbox tool when a task needs a fresh email alias, inbox messages, or a verification code. Keep account passwords, tokens, cookies, and verification codes out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_create_alias(address_type, variation_type, variation_label, custom_name, gmail_account_id, use_primary), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_find_verification_code(pattern), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. If a page requires email verification, check mailbox messages and use a code only if it is present in a message. Do not attempt to bypass CAPTCHA or access controls."""
 
 
 def valid_url(url):
@@ -91,6 +92,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     history = []
     used_providers = []
     used_models = []
+    generated_credentials = {}
     async with browser.session() as page:
         browser.current_task_id = task_id
         if url:
@@ -124,6 +126,15 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(loc.click); result = {"clicked":action.get('target'),"url":page.url}
                 elif name == 'fill':
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(str(action.get('value','')))); result = {"filled":action.get('target'),"value":"[redacted]"}
+                elif name == 'generate_credential':
+                    credential_name = str(action.get('name','')).strip()
+                    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', credential_name): raise ValueError('generate_credential requires a safe name')
+                    generated_credentials[credential_name] = generate_value(action.get('kind',''), int(action.get('length',20)), str(action.get('prefix','phoenix')))
+                    result = {"stored_as":credential_name,"kind":str(action.get('kind','')).lower()}
+                elif name == 'fill_generated':
+                    credential_name = str(action.get('name','')).strip()
+                    if credential_name not in generated_credentials: raise ValueError('No generated credential exists with that name')
+                    loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(generated_credentials[credential_name])); result = {"filled":action.get('target'),"value":"[redacted]","credential":"[redacted]"}
                 elif name == 'select':
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.select_option(str(action.get('value','')))); result = {"selected":action.get('target')}
                 elif name == 'press':
