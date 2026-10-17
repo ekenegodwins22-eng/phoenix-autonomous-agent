@@ -13,6 +13,7 @@ class MailboxError(RuntimeError): pass
 class MailboxClient:
     def __init__(self):
         self.base = settings.mailbox_api_base_url.rstrip('/')
+        self._session_cookie = None
 
     def _headers(self):
         h = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -20,7 +21,16 @@ class MailboxClient:
             h["Authorization"] = f"Bearer {settings.mailbox_api_token}"
         if settings.mailbox_api_cookie:
             h["Cookie"] = settings.mailbox_api_cookie
+        elif self._session_cookie:
+            h["Cookie"] = self._session_cookie
         return h
+
+    def _capture_session_cookie(self, response):
+        if settings.mailbox_api_cookie:
+            return
+        value = response.cookies.get('temp_session')
+        if value:
+            self._session_cookie = f"temp_session={value}"
 
     @staticmethod
     def _identifier(value: str, field: str) -> str:
@@ -43,6 +53,13 @@ class MailboxClient:
             raise MailboxError("Mailbox path must be a relative API path")
         async with httpx.AsyncClient(timeout=settings.mailbox_timeout_seconds, follow_redirects=False) as client:
             response = await client.request(method, self.base + path, headers=self._headers(), params=params, json=payload)
+            self._capture_session_cookie(response)
+            if response.status_code == 401 and path != '/session':
+                session_response = await client.get(self.base + '/session', headers=self._headers())
+                self._capture_session_cookie(session_response)
+                if session_response.status_code < 400:
+                    response = await client.request(method, self.base + path, headers=self._headers(), params=params, json=payload)
+                    self._capture_session_cookie(response)
         if response.status_code >= 400:
             raise MailboxError(f"Mailbox API returned HTTP {response.status_code}")
         try: return response.json()

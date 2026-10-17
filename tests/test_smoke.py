@@ -153,6 +153,34 @@ def test_mailbox_restore_session_validates_email():
         MailboxClient._email('not-an-email')
 
 
+def test_mailbox_bootstraps_temp_session_cookie(monkeypatch):
+    import asyncio
+    import httpx
+    from app.mailbox import MailboxClient
+    client = MailboxClient()
+    seen = []
+    def handler(request):
+        seen.append((request.url.path, request.headers.get('cookie')))
+        if request.url.path == '/aliases' and not request.headers.get('cookie'):
+            return httpx.Response(401, json={'detail': 'Not authenticated'})
+        if request.url.path == '/session':
+            return httpx.Response(200, json={'id': 1}, headers={'set-cookie': 'temp_session=test-session; Path=/;'})
+        return httpx.Response(200, json=[])
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def request(self, method, url, **kwargs):
+            request = httpx.Request(method, url, headers=kwargs.get('headers'))
+            response = handler(request)
+            response.request = request
+            return response
+        async def get(self, url, **kwargs): return await self.request('GET', url, **kwargs)
+    monkeypatch.setattr(client, 'base', 'https://mailbox.test')
+    monkeypatch.setattr('app.mailbox.httpx.AsyncClient', lambda **kwargs: FakeClient())
+    assert asyncio.run(client.list_aliases()) == []
+    assert seen == [('/aliases', None), ('/session', None), ('/aliases', 'temp_session=test-session')]
+
+
 def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     import asyncio
     import httpx
