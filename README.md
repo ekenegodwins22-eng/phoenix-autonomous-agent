@@ -54,11 +54,11 @@ Protected endpoints:
 - `POST /mailbox/session/recovery`
 - `GET /mailbox/accounts`
 - `GET /mailbox/aliases`
-- `POST /mailbox/aliases` (accepts `address_type` (`gmail.com` by default or `googlemail.com`), `variation_type`, `variation_label`, `custom_name`, `gmail_account_id`, `use_primary`)
+- `POST /mailbox/aliases` (accepts `address_type` (`alias` or `variation`), `variation_type`, `variation_label`, `custom_name`, integer `gmail_account_id`, `use_primary`)
 - `GET /mailbox/aliases/{alias_id}/messages`
 - `GET /mailbox/messages`
 - `GET /mailbox/messages/{message_id}`
-- `GET /mailbox/messages/{message_id}/attachments`
+- `GET /mailbox/messages/{message_id}/attachments/{attachment_id}`
 
 The browser agent can also call the mailbox health/accounts/aliases/create-alias/message actions while executing a task. It uses the configured TempNest API, not SMTP.
 

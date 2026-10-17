@@ -25,7 +25,7 @@ class MailboxClient:
     @staticmethod
     def _identifier(value: str, field: str) -> str:
         value = str(value or "")
-        if not value or not re.fullmatch(r"[A-Za-z0-9._:@-]{1,200}", value):
+        if not value or not re.fullmatch(r"[0-9]+", value):
             raise MailboxError(f"Invalid mailbox {field}")
         return value
 
@@ -68,7 +68,7 @@ class MailboxClient:
     async def delete_alias(self, alias_id: str):
         return await self.request('DELETE', f'/aliases/{self._identifier(alias_id, "alias ID")}')
 
-    async def create_alias(self, *, address_type='gmail.com', variation_type='dots', variation_label=None, custom_name=None, gmail_account_id=None, use_primary=False):
+    async def create_alias(self, *, address_type='alias', variation_type='dots', variation_label=None, custom_name=None, gmail_account_id=None, use_primary=False):
         body = {"address_type": address_type, "variation_type": variation_type, "use_primary": use_primary}
         for key, value in {"variation_label": variation_label, "custom_name": custom_name, "gmail_account_id": gmail_account_id}.items():
             if value is not None: body[key] = value
@@ -83,7 +83,7 @@ class MailboxClient:
     async def get_message(self, message_id: str):
         return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}')
 
-    async def get_attachments(self, message_id: str):
-        return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}/attachments')
+    async def get_attachment(self, message_id: str, attachment_id: str):
+        return await self.request('GET', f'/messages/{self._identifier(message_id, "message ID")}/attachments/{self._identifier(attachment_id, "attachment ID")}')
 
 mailbox = MailboxClient()

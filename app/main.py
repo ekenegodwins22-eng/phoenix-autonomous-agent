@@ -3,7 +3,7 @@ from collections import OrderedDict
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from app.config import settings
 from app.models import TaskRequest, TaskStatus, now_utc
 from app.runner import execute_task
@@ -55,7 +55,7 @@ async def mailbox_session(user=Depends(current_user)):
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Mailbox API unavailable: {str(exc)[:250]}")
 
 class SessionRestoreRequest(BaseModel):
-    alias_email: str
+    alias_email: EmailStr
 
 @app.post('/mailbox/session/restore')
 async def mailbox_session_restore(payload: SessionRestoreRequest, user=Depends(current_user)):
@@ -87,23 +87,23 @@ async def mailbox_message(message_id: str, user=Depends(current_user)):
     try: return await mailbox.get_message(message_id)
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Mailbox API unavailable: {str(exc)[:250]}")
 
-@app.get('/mailbox/messages/{message_id}/attachments')
-async def mailbox_attachments(message_id: str, user=Depends(current_user)):
-    try: return await mailbox.get_attachments(message_id)
+@app.get('/mailbox/messages/{message_id}/attachments/{attachment_id}')
+async def mailbox_attachments(message_id: str, attachment_id: str, user=Depends(current_user)):
+    try: return await mailbox.get_attachment(message_id, attachment_id)
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Mailbox API unavailable: {str(exc)[:250]}")
 
 class AliasRequest(BaseModel):
-    address_type: str = 'gmail.com'
+    address_type: str = 'alias'
     variation_type: str = 'dots'
     variation_label: str | None = None
     custom_name: str | None = None
-    gmail_account_id: str | None = None
+    gmail_account_id: int | None = None
     use_primary: bool = False
 
 @app.post('/mailbox/aliases')
 async def create_mailbox_alias(payload: AliasRequest, user=Depends(current_user)):
-    if payload.address_type not in {'gmail.com','googlemail.com'}: raise HTTPException(422, detail='address_type must be gmail.com or googlemail.com')
-    if payload.variation_type not in {'dots','googlemail','plus','combined'}: raise HTTPException(422, detail='Unsupported variation_type')
+    if payload.address_type not in {'alias','variation'}: raise HTTPException(422, detail='address_type must be alias or variation')
+    if payload.variation_type not in {'dots','googlemail','plus','combined','googlemail_dot','googlemail_alias','googlemail_combined'}: raise HTTPException(422, detail='Unsupported variation_type')
     try:
         return await mailbox.create_alias(address_type=payload.address_type, variation_type=payload.variation_type, variation_label=payload.variation_label, custom_name=payload.custom_name, gmail_account_id=payload.gmail_account_id, use_primary=payload.use_primary)
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Mailbox API unavailable: {str(exc)[:250]}")
