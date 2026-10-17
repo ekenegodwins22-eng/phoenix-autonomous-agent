@@ -6,6 +6,42 @@ def test_health():
     response = TestClient(app).get('/health')
     assert response.status_code == 200
     assert response.json()['status'] == 'ok'
+    assert 'resources' in response.json()
+
+
+def test_runtime_status_requires_auth():
+    assert TestClient(app).get('/runtime/status').status_code == 401
+
+
+def test_runtime_cleanup_only_removes_expired_designated_temp_files(monkeypatch, tmp_path):
+    import os
+    from app import config
+    from app.runtime import cleanup_runtime_temp
+    monkeypatch.setattr(config.settings, 'runtime_temp_dir', str(tmp_path))
+    monkeypatch.setattr(config.settings, 'runtime_temp_retention_seconds', 0)
+    old = tmp_path / 'old.tmp'
+    old.write_text('temporary')
+    os.utime(old, (1, 1))
+    important = tmp_path.parent / 'important.txt'
+    important.write_text('keep')
+    result = cleanup_runtime_temp()
+    assert result['removed_entries'] == 1
+    assert not old.exists()
+    assert important.exists()
+
+
+def test_browser_installation_status_reports_missing_binary(monkeypatch):
+    import sys
+    import types
+    from app import runtime
+    class MissingChromium:
+        executable_path = '/does/not/exist'
+    class FakePlaywright:
+        chromium = MissingChromium()
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    monkeypatch.setitem(sys.modules, 'playwright.sync_api', types.SimpleNamespace(sync_playwright=lambda: FakePlaywright()))
+    assert runtime.browser_installation_status()['available'] is False
 
 
 def test_tasks_require_auth():

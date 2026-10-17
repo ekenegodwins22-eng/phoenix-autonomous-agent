@@ -23,3 +23,17 @@ services:
         sync: false
       - key: MAILBOX_API_COOKIE
         sync: false
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /ms-playwright
+      - key: RUNTIME_TEMP_DIR
+        value: /tmp/phoenix
+      - key: RUNTIME_TEMP_RETENTION_SECONDS
+        value: "3600"
+      - key: RUNTIME_CLEANUP_MAX_ENTRIES
+        value: "100"
+      - key: RESOURCE_DISK_PATH
+        value: /
+      - key: MINIMUM_FREE_DISK_BYTES
+        value: "268435456"
+      - key: MAXIMUM_MEMORY_USED_PERCENT
+        value: "92"

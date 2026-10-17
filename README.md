@@ -19,7 +19,7 @@ Recommended:
 - `GEMINI_MODEL`: defaults to `gemini-2.5-flash`.
 - `MAILBOX_API_BASE_URL`: defaults to your TempNest service.
 - `MAILBOX_API_TOKEN`: optional bearer token if the mailbox service requires one.
-- `MAILBOX_API_COOKIE`: optional session cookie if the mailbox service uses browser-session authentication.
+- `MAILBOX_API_COOKIE`: optional fixed session cookie. The live mailbox API issues a `temp_session` cookie automatically, which Phoenix bootstraps and retains in memory when needed.
 - `DATABASE_PATH`: SQLite file location. Persist it with a persistent disk or replace the store with managed Postgres for production.
 
 ## API quick start
@@ -68,7 +68,7 @@ When the user explicitly authorizes generated registration values, the agent can
 
 ## Browser lifecycle and resource use
 
-Tasks are queued and run sequentially. Chromium is headless, launches with background services disabled, and the browser session is closed in a `finally` block after completion, failure, or cancellation. When human verification is required, the active page remains open and can be inspected through the authenticated screenshot/browser-action endpoints. `MAX_AGENT_STEPS` caps the action loop. Navigation and common browser controls retry once after transient errors, and ordinary JavaScript dialogs are dismissed. The agent uses semantic labels/placeholders before CSS selectors and redacts form values from action history. CAPTCHA and human-verification indicators are detected; the task pauses with `waiting_human` rather than attempting a bypass. No automated CAPTCHA solver is included.
+Tasks are queued and run sequentially. The Docker image installs the exact Playwright dependency from `requirements.txt` together with its matching Chromium revision and Linux dependencies, placing the browser in the shared `/ms-playwright` cache for the non-root runtime user. Container startup verifies that the executable exists and is runnable. Chromium is headless, launches with background services disabled, and the browser session is closed in a `finally` block after completion, failure, or cancellation. When human verification is required, the active page remains open and can be inspected through the authenticated screenshot/browser-action endpoints. `MAX_AGENT_STEPS` caps the action loop. Before launch, Phoenix checks disk and memory and performs bounded cleanup only under `/tmp/phoenix`; after a task it removes expired designated temporary artifacts. `GET /health` reports sanitized resource and browser diagnostics, while authenticated `GET /runtime/status` exposes the detailed status. Navigation and common browser controls retry once after transient errors, and ordinary JavaScript dialogs are dismissed. The agent uses semantic labels/placeholders before CSS selectors and redacts form values from action history. CAPTCHA and human-verification indicators are detected; the task pauses with `waiting_human` rather than attempting a bypass. No automated CAPTCHA solver is included.
 
 ## Tests
 

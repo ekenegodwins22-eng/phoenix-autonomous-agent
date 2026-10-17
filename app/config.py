@@ -29,5 +29,12 @@ class Settings(BaseSettings):
     mailbox_api_token: str = ""
     mailbox_api_cookie: str = ""
     mailbox_timeout_seconds: float = 20
+    playwright_browsers_path: str = "/ms-playwright"
+    runtime_temp_dir: str = "/tmp/phoenix"
+    runtime_temp_retention_seconds: int = 3600
+    runtime_cleanup_max_entries: int = 100
+    resource_disk_path: str = "/"
+    minimum_free_disk_bytes: int = 268435456
+    maximum_memory_used_percent: float = 92
 
 settings = Settings()

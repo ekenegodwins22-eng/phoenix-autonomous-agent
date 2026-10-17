@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from playwright.async_api import async_playwright
 from app.config import settings
+from app.runtime import browser_installation_status, ensure_resources, cleanup_runtime_temp
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,10 @@ class SingleBrowser:
         async with self.lock:
             pw = browser = context = page = None
             try:
+                status = await asyncio.to_thread(ensure_resources)
+                installation = await asyncio.to_thread(browser_installation_status)
+                if not installation.get('available'):
+                    raise RuntimeError(f"Playwright Chromium unavailable: {installation.get('error', 'unknown installation error')}")
                 pw = await async_playwright().start()
                 browser = await pw.chromium.launch(headless=settings.browser_headless, args=[
                     "--disable-dev-shm-usage", "--disable-background-networking",
@@ -51,6 +56,10 @@ class SingleBrowser:
                     try:
                         await asyncio.wait_for(pw.stop(), timeout=settings.browser_close_timeout_seconds)
                     except Exception as exc:
-                        log.warning("Playwright shutdown failed: %s", type(exc).__name__)
+                            log.warning("Playwright shutdown failed: %s", type(exc).__name__)
+                try:
+                    await asyncio.to_thread(cleanup_runtime_temp)
+                except Exception as exc:
+                    log.warning("Runtime temporary cleanup failed: %s", type(exc).__name__)
 
 browser = SingleBrowser()

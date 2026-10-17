@@ -11,6 +11,7 @@ from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
 from app.providers import available_models
 from app.browser import browser
+from app.runtime import resource_status, browser_installation_status
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.3.0", description="Low-memory sequential browser agent with selectable self-hosted and Gemini models.")
@@ -30,7 +31,15 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok","browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume"}
+    installation = browser_installation_status()
+    resources = resource_status()
+    return {"status":"ok","browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume","browser":{"available":installation.get('available'),"error":installation.get('error')},"resources":{"disk":resources.get('disk'),"memory":resources.get('memory'),"browser_processes":resources.get('browser_processes'),"timestamp":resources.get('timestamp')}}
+
+@app.get('/runtime/status')
+async def runtime_status(user=Depends(current_user)):
+    installation = await asyncio.to_thread(browser_installation_status)
+    resources = await asyncio.to_thread(resource_status)
+    return {"browser": installation, "resources": resources}
 
 @app.post('/auth/register', status_code=201)
 async def register(payload: AuthPayload):
