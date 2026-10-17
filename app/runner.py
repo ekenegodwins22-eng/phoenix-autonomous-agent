@@ -79,7 +79,7 @@ async def _browser_retry(operation, attempts=2):
                 await asyncio.sleep(0.25 * (attempt + 1))
     raise last_error
 
-async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None):
+async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None):
     async def report(message):
         if progress:
             await progress(message)
@@ -92,6 +92,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     used_providers = []
     used_models = []
     async with browser.session() as page:
+        browser.current_task_id = task_id
         if url:
             await report(f"Opening {url}")
             await _browser_retry(lambda: page.goto(url, wait_until='domcontentloaded'))
@@ -99,8 +100,16 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
         for step in range(1, settings.max_agent_steps + 1):
             await report(f"Choosing action {step}/{settings.max_agent_steps}")
             state = await _snapshot(page) if page.url else {"url":"", "title":"", "body":"No page open yet. Use goto with an explicit URL from the task, or ask user for target URL.", "controls":[]}
-            if state.get("challenge"):
-                raise HumanInterventionRequired(json.dumps(state["challenge"], ensure_ascii=False))
+            while state.get("challenge"):
+                details = state["challenge"]
+                if on_waiting_human:
+                    await on_waiting_human(details)
+                if resume_event is None:
+                    raise HumanInterventionRequired(json.dumps(details, ensure_ascii=False))
+                await resume_event.wait()
+                resume_event.clear()
+                await report("Resuming after human verification")
+                state = await _snapshot(page)
             action, provider, used_model = await _choose_action(instruction, history, state, step, provider_choice, model)
             used_providers.append(provider)
             used_models.append(used_model)

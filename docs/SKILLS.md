@@ -44,7 +44,7 @@ The model receives the user's task, recent action history, and a snapshot of the
 - CAPTCHA and human-verification indicators are detected from visible page text and controls.
 - Detected challenges are classified as reCAPTCHA, hCaptcha, Cloudflare Turnstile, or generic human verification, with site-accessible alternatives reported when visible.
 - A detected challenge pauses the task with status `waiting_human`; the user must complete the challenge through an authorized human interaction and call `POST /tasks/{id}/resume`.
-- The agent never solves, bypasses, or claims success for a CAPTCHA automatically. The resume endpoint starts a fresh controlled browser run, so the challenge must be available through the configured browser/session workflow.
+- The agent never solves, bypasses, or claims success for a CAPTCHA automatically. Authenticated screenshot and browser-action endpoints operate on the retained active page; `POST /tasks/{id}/resume` continues the same task coroutine and browser session.
 
 ## Provider skills
 

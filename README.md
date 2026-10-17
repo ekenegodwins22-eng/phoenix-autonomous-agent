@@ -43,7 +43,7 @@ Create a browser task using `POST /tasks`:
 {"instruction":"Open https://example.com and tell me the page title", "provider":"primary", "model":"your-model-id"}
 ```
 
-Poll `GET /tasks/{id}` until status is `completed`, `failed`, or `waiting_human`; use the `progress` field for the latest verified action. If the status is `waiting_human`, complete the requested human verification through an authorized workflow and call `POST /tasks/{id}/resume`.
+Poll `GET /tasks/{id}` until status is `completed`, `failed`, or `waiting_human`; use the `progress` field for the latest verified action. If the status is `waiting_human`, use the authenticated `GET /tasks/{id}/screenshot` and `POST /tasks/{id}/browser-action` endpoints to complete the authorized human step in the retained browser session, then call `POST /tasks/{id}/resume`.
 
 ## Mailbox API bridge
 
@@ -65,7 +65,7 @@ For authorized email verification workflows, the agent can call `mailbox_find_ve
 
 ## Browser lifecycle and resource use
 
-Tasks are queued and run sequentially. Chromium is headless, launches with background services disabled, and the browser session is closed in a `finally` block even on errors/timeouts. `MAX_AGENT_STEPS` caps the action loop. Navigation and common browser controls retry once after transient errors, and ordinary JavaScript dialogs are dismissed. The agent uses semantic labels/placeholders before CSS selectors and redacts form values from action history. CAPTCHA and human-verification indicators are detected; the task pauses with `waiting_human` rather than attempting a bypass. No automated CAPTCHA solver is included.
+Tasks are queued and run sequentially. Chromium is headless, launches with background services disabled, and the browser session is closed in a `finally` block after completion, failure, or cancellation. When human verification is required, the active page remains open and can be inspected through the authenticated screenshot/browser-action endpoints. `MAX_AGENT_STEPS` caps the action loop. Navigation and common browser controls retry once after transient errors, and ordinary JavaScript dialogs are dismissed. The agent uses semantic labels/placeholders before CSS selectors and redacts form values from action history. CAPTCHA and human-verification indicators are detected; the task pauses with `waiting_human` rather than attempting a bypass. No automated CAPTCHA solver is included.
 
 ## Tests
 

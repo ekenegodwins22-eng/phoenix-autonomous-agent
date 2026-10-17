@@ -10,6 +10,9 @@ class SingleBrowser:
     # A single lock guarantees the old browser is cleaned up before another launches.
     def __init__(self):
         self.lock = asyncio.Lock()
+        self.current_page = None
+        self.current_context = None
+        self.current_task_id = None
 
     @asynccontextmanager
     async def session(self):
@@ -25,6 +28,8 @@ class SingleBrowser:
                 ])
                 context = await browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=True)
                 page = await context.new_page()
+                self.current_page = page
+                self.current_context = context
                 async def dismiss_dialog(dialog):
                     log.info("Dismissing browser dialog of type %s", dialog.type)
                     await dialog.dismiss()
@@ -33,6 +38,9 @@ class SingleBrowser:
                 page.set_default_navigation_timeout(settings.browser_navigation_timeout_ms)
                 yield page
             finally:
+                self.current_page = None
+                self.current_context = None
+                self.current_task_id = None
                 for obj in (page, context, browser):
                     if obj is not None:
                         try:
