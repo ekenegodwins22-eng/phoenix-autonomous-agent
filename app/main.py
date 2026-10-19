@@ -241,6 +241,10 @@ async def send_task_message(task_ref: str, payload: TaskMessageRequest, user=Dep
     elif normalized in {'resume', 'continue', 'continue task'} and item['status'] == 'waiting_human':
         event = task_resume_events.get(item['id'])
         if event: event.set()
+    elif item['status'] in {'completed', 'failed', 'cancelled'}:
+        reopened = task_store.requeue_for_message(item['id'])
+        if reopened:
+            asyncio.create_task(start_task(item['id']))
     return message
 
 

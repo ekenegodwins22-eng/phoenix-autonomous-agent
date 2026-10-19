@@ -174,6 +174,19 @@ def request_cancel(task_id: str) -> bool:
         return cur.rowcount == 1
 
 
+def requeue_for_message(task_id: str) -> dict | None:
+    """Reopen a terminal task when its owner sends a follow-up instruction."""
+    with _connect() as conn:
+        row = conn.execute('SELECT status FROM tasks WHERE id=?', (task_id,)).fetchone()
+        if not row or row['status'] not in {'completed', 'failed', 'cancelled'}:
+            return None
+        now = _now()
+        conn.execute("UPDATE tasks SET status='queued', progress='Follow-up instruction received; task re-queued.', error=NULL, result=NULL, human_help=NULL, waiting_details=NULL, cancel_requested=0, worker_token=NULL, updated_at=? WHERE id=?", (now, task_id))
+        conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (task_id, now, 'info', 'Follow-up instruction received; existing task session re-queued.'))
+        conn.commit()
+    return get_task(task_id)
+
+
 def is_cancel_requested(task_id: str) -> bool:
     with _connect() as conn:
         row = conn.execute('SELECT cancel_requested FROM tasks WHERE id=?', (task_id,)).fetchone()

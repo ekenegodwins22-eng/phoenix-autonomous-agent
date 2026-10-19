@@ -241,6 +241,24 @@ def test_mailbox_prepare_address_reuses_active_alias():
     assert result['reused'] is True
 
 
+def test_terminal_task_reopens_for_follow_up_message(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'follow-up.db'))
+    task = task_store.create_task(owner_id=3, instruction='Inspect', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    task_store.set_state(task['id'], 'completed', result='done')
+    reopened = task_store.requeue_for_message(task['id'])
+    assert reopened['id'] == task['id']
+    assert reopened['status'] == 'queued'
+    assert task_store.get_task(task['slug'], owner_id=3)['id'] == task['id']
+
+
+def test_registration_email_detection_uses_email_control_and_ignores_explicit_email():
+    from app.runner import _registration_needs_mailbox_email
+    state = {'controls': [{'type': 'email', 'name': 'email', 'label': 'Email address'}]}
+    assert _registration_needs_mailbox_email('Register a new account', state) is True
+    assert _registration_needs_mailbox_email('Register using person@example.com', state) is False
+
+
 def test_mailbox_restore_session_validates_email():
     import pytest
     from app.mailbox import MailboxClient, MailboxError

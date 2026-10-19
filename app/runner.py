@@ -95,6 +95,36 @@ async def _inspect_form_fields(page):
       })""")
 
 
+def _registration_needs_mailbox_email(instruction: str, state: dict) -> bool:
+    text = str(instruction or '').lower()
+    if not any(word in text for word in ('register', 'registration', 'sign up', 'signup', 'create account', 'create an account')):
+        return False
+    if re.search(r'\b[^\s@]+@[^\s@]+\.[^\s@]+\b', instruction or ''):
+        return False
+    return any(
+        str(control.get('type', '')).lower() == 'email'
+        or str(control.get('autocomplete', '')).lower() == 'email'
+        or any(token in f"{control.get('name', '')} {control.get('id', '')} {control.get('label', '')} {control.get('placeholder', '')}".lower() for token in ('email', 'e-mail'))
+        for control in state.get('controls', [])
+    )
+
+
+async def _prepare_mailbox_email(page, state: dict, mailbox_context: dict):
+    prepared = await mailbox.prepare_address(variation_type='dots', address_type='alias')
+    target = next((control for control in state.get('controls', []) if str(control.get('type', '')).lower() == 'email' or str(control.get('autocomplete', '')).lower() == 'email' or 'email' in f"{control.get('name', '')} {control.get('id', '')} {control.get('label', '')} {control.get('placeholder', '')}".lower()), None)
+    if not target:
+        raise ValueError('No email input was available for the connected mailbox address')
+    if target.get('id'):
+        locator = page.locator(f'#{target["id"]}').first
+    elif target.get('name'):
+        locator = page.locator(f'[name="{target["name"]}"]').first
+    else:
+        locator = page.locator('input[type="email"], input[autocomplete="email"]').first
+    await _browser_retry(lambda: locator.fill(prepared['address']))
+    mailbox_context.update(prepared)
+    return {'filled': target.get('label') or target.get('name') or target.get('id') or 'email', 'alias_id': prepared.get('alias_id'), 'gmail_account_id': prepared.get('gmail_account_id'), 'reused': prepared.get('reused'), 'variation_type': prepared.get('variation_type')}
+
+
 async def _fill_form(page):
     profile = synthetic_profile()
     fields = await _inspect_form_fields(page)
@@ -154,6 +184,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     used_models = []
     generated_credentials = {}
     mailbox_context = {}
+    mailbox_email_attempted = False
     async with browser.session() as page:
         browser.current_task_id = task_id
         if url:
@@ -181,6 +212,16 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 resume_event.clear()
                 await report("Resuming after human verification")
                 state = await _snapshot(page)
+            if not mailbox_email_attempted and _registration_needs_mailbox_email(instruction, state):
+                mailbox_email_attempted = True
+                try:
+                    result = await _prepare_mailbox_email(page, state, mailbox_context)
+                    history.append({'action': 'mailbox_prepare_email', 'target': result.get('filled'), 'result': result})
+                    await report('Verified action: connected mailbox email prepared and filled')
+                    continue
+                except Exception as exc:
+                    history.append({'action': 'mailbox_prepare_email', 'error': f'{type(exc).__name__}: {str(exc)[:300]}'})
+                    await report(f'Connected mailbox email was not available: {type(exc).__name__}')
             action, provider, used_model = await _choose_action(instruction, history, state, step, provider_choice, model)
             used_providers.append(provider)
             used_models.append(used_model)
