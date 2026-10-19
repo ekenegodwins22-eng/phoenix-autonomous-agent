@@ -12,6 +12,7 @@ from app.providers import available_models
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
 from app import task_store
+from app.instructions import InstructionConfigError, instruction_status
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
@@ -42,13 +43,13 @@ async def root():
 @app.get("/health")
 async def health():
     installation, resources = await asyncio.gather(asyncio.to_thread(browser_installation_status, verify_launch=False), asyncio.to_thread(resource_status))
-    return {"status":"ok","database":"postgresql" if settings.database_url else "sqlite","browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume","browser":{"available":installation.get('available'),"error":installation.get('error')},"resources":{"disk":resources.get('disk'),"memory":resources.get('memory'),"browser_processes":resources.get('browser_processes'),"timestamp":resources.get('timestamp')}}
+    return {"status":"ok","database":"postgresql" if settings.database_url else "sqlite","agent_instructions":instruction_status(),"browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume","browser":{"available":installation.get('available'),"error":installation.get('error')},"resources":{"disk":resources.get('disk'),"memory":resources.get('memory'),"browser_processes":resources.get('browser_processes'),"timestamp":resources.get('timestamp')}}
 
 @app.get('/runtime/status')
 async def runtime_status(user=Depends(current_user)):
     installation = await asyncio.to_thread(browser_installation_status)
     resources = await asyncio.to_thread(resource_status)
-    return {"browser": installation, "resources": resources}
+    return {"agent_instructions": instruction_status(), "browser": installation, "resources": resources}
 
 @app.post('/auth/register', status_code=201)
 async def register(payload: AuthPayload):
@@ -207,6 +208,8 @@ async def run_task(task_id: str):
             task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
         except (TaskBlocked, TaskIncomplete) as exc:
             task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=str(exc)[:400])
+        except InstructionConfigError as exc:
+            task_store.set_state(task_id, 'failed', progress='Agent instruction configuration could not be loaded.', error=str(exc)[:400])
         except Exception as exc:
             logging.exception('Task %s failed', task_id)
             task_store.set_state(task_id, 'failed', progress='Task failed; see the error for details.', error=f'{type(exc).__name__}: {str(exc)[:400]}')

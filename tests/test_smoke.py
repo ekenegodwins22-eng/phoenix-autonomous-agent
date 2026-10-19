@@ -7,6 +7,8 @@ def test_health():
     assert response.status_code == 200
     assert response.json()['status'] == 'ok'
     assert 'resources' in response.json()
+    assert response.json()['agent_instructions']['loaded'] is True
+    assert len(response.json()['agent_instructions']['version']) == 64
 
 
 def test_health_uses_fast_browser_presence_check(monkeypatch):
@@ -213,6 +215,30 @@ def test_model_prose_gets_corrective_retry_instead_of_false_completion(monkeypat
     assert action == {'action': 'inspect'}
     assert provider == 'primary'
     assert model == 'test-model'
+
+
+def test_agent_md_is_loaded_into_active_prompt(monkeypatch):
+    import asyncio
+    from app import runner
+    captured = {}
+    async def fake_chat(messages, **kwargs):
+        captured['system'] = messages[0]['content']
+        return '{"action":"inspect"}', 'primary', 'test-model'
+    monkeypatch.setattr(runner, 'chat', fake_chat)
+    asyncio.run(runner._choose_action('Inspect', [], {'url':'https://example.test'}, 1, 'primary', 'test-model'))
+    assert 'Phoenix Agent Behavior' in captured['system']
+    assert 'ACTIVE AGENT INSTRUCTIONS (version ' in captured['system']
+    assert 'Do not replace execution with advice.' in captured['system']
+
+
+def test_missing_agent_md_is_a_configuration_error(monkeypatch):
+    import asyncio
+    from pathlib import Path
+    import pytest
+    from app import instructions, runner
+    monkeypatch.setattr(instructions, 'AGENT_PATH', Path('/tmp/phoenix-agent-file-that-does-not-exist'))
+    with pytest.raises(instructions.InstructionConfigError):
+        asyncio.run(runner._choose_action('Inspect', [], {'url':'https://example.test'}, 1, 'primary', 'test-model'))
 
 
 def test_invalid_start_url_is_blocked_not_reported_as_completed():

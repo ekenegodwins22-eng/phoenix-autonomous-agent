@@ -7,6 +7,7 @@ from app.mailbox import mailbox
 from app.config import settings
 from app.credentials import generate_value
 from app.form_data import synthetic_profile, classify_field, constrained_value
+from app.instructions import InstructionConfigError, load_agent_instructions
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -42,7 +43,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. For authorized test-data requests, use fill_form to inspect the DOM and fill supported fields with coherent synthetic values; do not submit consequential forms without user confirmation. Generated test values are not verified identities. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. When an email address is required for an authorized real-service workflow, use mailbox_prepare_email(target,variation_type,address_type,gmail_account_id) to reuse or create a supported alias after inspecting accounts and aliases. Use mailbox_fill_verification_code(target,pattern,alias_id) or mailbox_open_verification_link(alias_id) for authorized inbox verification. Keep account passwords, tokens, cookies, OTPs, and verification URLs out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. Do not attempt to bypass CAPTCHA or access controls."""
+SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
 
 
 def valid_url(url):
@@ -58,12 +59,14 @@ async def _snapshot(page):
     return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_info(body, controls)}
 
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
+    agent_instructions, instruction_version = load_agent_instructions()
+    system_prompt = SYSTEM + "\n\nACTIVE AGENT INSTRUCTIONS (version " + instruction_version + "):\n" + agent_instructions
     prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
     last_provider, last_model = provider_choice, model
     for attempt in range(max(0, settings.model_action_retries) + 1):
         if attempt:
             prompt['correction'] = 'The previous response was not a valid action object. Continue the unfinished task and return exactly one JSON action object; do not explain or claim completion.'
-        raw, last_provider, last_model = await chat([{"role":"system","content":SYSTEM}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
+        raw, last_provider, last_model = await chat([{"role":"system","content":system_prompt}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
         try:
             match = re.search(r'\{.*\}', raw, re.S)
             action = json.loads(match.group(0) if match else raw)
