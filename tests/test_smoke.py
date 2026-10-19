@@ -215,6 +215,14 @@ def test_model_prose_gets_corrective_retry_instead_of_false_completion(monkeypat
     assert model == 'test-model'
 
 
+def test_invalid_start_url_is_blocked_not_reported_as_completed():
+    import asyncio
+    import pytest
+    from app.runner import TaskBlocked, execute_task
+    with pytest.raises(TaskBlocked, match='Invalid start URL'):
+        asyncio.run(execute_task('Open the site', start_url='not-a-url'))
+
+
 def test_redacted_checkpoint_persists_last_verified_action(monkeypatch, tmp_path):
     from app import config, task_store
     monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'checkpoint.db'))

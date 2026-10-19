@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from app.config import settings
 from app.models import TaskRequest, TaskStatus, TaskMessage, TaskMessageRequest, now_utc
-from app.runner import HumanInterventionRequired, execute_task
+from app.runner import HumanInterventionRequired, TaskBlocked, TaskIncomplete, execute_task
 from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
 from app.providers import available_models
@@ -205,6 +205,8 @@ async def run_task(task_id: str):
             task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
         except HumanInterventionRequired as exc:
             task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
+        except (TaskBlocked, TaskIncomplete) as exc:
+            task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=str(exc)[:400])
         except Exception as exc:
             logging.exception('Task %s failed', task_id)
             task_store.set_state(task_id, 'failed', progress='Task failed; see the error for details.', error=f'{type(exc).__name__}: {str(exc)[:400]}')

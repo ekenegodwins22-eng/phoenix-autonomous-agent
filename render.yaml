@@ -51,3 +51,5 @@ services:
         value: "60"
       - key: MODEL_ACTION_RETRIES
         value: "2"
+      - key: BROWSER_RETRY_ATTEMPTS
+        value: "3"

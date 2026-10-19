@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     browser_headless: bool = True
     browser_navigation_timeout_ms: int = 30000
     browser_action_timeout_ms: int = 10000
+    browser_retry_attempts: int = 3
     browser_close_timeout_seconds: float = 8
     mailbox_api_base_url: str = "https://gmail-alias-api.senseiphoenix.name.ng"
     mailbox_api_token: str = ""

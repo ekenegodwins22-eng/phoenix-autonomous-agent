@@ -12,6 +12,14 @@ class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
 
 
+class TaskBlocked(RuntimeError):
+    """Raised when execution cannot begin with the supplied task parameters."""
+
+
+class TaskIncomplete(RuntimeError):
+    """Raised when the bounded execution budget ends before verified completion."""
+
+
 def _challenge_info(body: str, controls: list[dict]) -> dict | None:
     text = f"{body} {' '.join(str(control) for control in controls)}".lower()
     if "hcaptcha" in text:
@@ -75,7 +83,8 @@ async def _locate(page, target):
         except Exception: pass
     return page.locator(target).first
 
-async def _browser_retry(operation, attempts=2):
+async def _browser_retry(operation, attempts=None):
+    attempts = attempts or settings.browser_retry_attempts
     last_error = None
     for attempt in range(attempts):
         try:
@@ -183,7 +192,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     if not url:
         match = re.search(r"https?://[^\s)>\"\']+", instruction)
         if match: url = match.group(0).rstrip('.,')
-    if url and not valid_url(url): return "Invalid start URL: use http or https."
+    if url and not valid_url(url):
+        raise TaskBlocked('Invalid start URL: use http or https.')
     history = []
     used_providers = []
     used_models = []
@@ -292,7 +302,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 elif name == 'mailbox_attachment': result = await mailbox.get_attachment(str(action.get('message_id','')), str(action.get('attachment_id','')))
                 elif name == 'done':
                     summary = str(action.get('summary','Task loop finished.'))
-                    history.append({"action":"done","result":summary})
+                    evidence = await _snapshot(page) if page.url else {'url': '', 'title': '', 'body': ''}
+                    history.append({"action":"done","result":summary,"evidence":{"url":evidence.get('url'),"title":evidence.get('title'),"body_excerpt":evidence.get('body','')[:500]}})
                     return _format_result(summary, history, used_providers, used_models)
                 else: raise ValueError(f"Unsupported action: {name}")
                 # Never keep values typed into forms in task history.
@@ -305,7 +316,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 if save_checkpoint:
                     await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url, 'error_type': type(exc).__name__})
                 await report(f"Action {step} failed: {type(exc).__name__}")
-    return _format_result(f"Stopped after reaching the {settings.max_agent_steps}-step limit. Review the verified actions below and submit a follow-up task to continue.", history, used_providers, used_models)
+    raise TaskIncomplete(f"Execution budget exhausted after {settings.max_agent_steps} actions before Phoenix could verify completion.")
 
 def _format_result(summary, history, providers, models=None):
     clean = []
