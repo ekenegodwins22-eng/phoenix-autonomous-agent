@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "INFO"
     max_task_history: int = 100
+    max_task_recovery_attempts: int = 2
     task_timeout_seconds: int = 300
     max_agent_steps: int = 20
     browser_headless: bool = True

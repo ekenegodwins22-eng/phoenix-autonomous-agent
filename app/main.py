@@ -1,5 +1,4 @@
-import asyncio, logging, uuid
-from collections import OrderedDict
+import asyncio, logging
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from pathlib import Path
@@ -12,18 +11,29 @@ from app.mailbox import mailbox
 from app.providers import available_models
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
+from app import task_store
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
-app = FastAPI(title=settings.app_name, version="0.3.0", description="Low-memory sequential browser agent with selectable self-hosted and Gemini models.")
-tasks = OrderedDict()
-task_lock = asyncio.Lock()
+app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
 execution_lock = asyncio.Lock()
 task_resume_events = {}
+task_cancel_events = {}
+task_handles = {}
 
 class TaskResponse(TaskStatus):
     pass
 
-def snapshot(item): return TaskStatus(**item)
+def snapshot(item):
+    item = dict(item)
+    item['session_url'] = f"/tasks/{item['slug']}/session"
+    item['logs'] = task_store.get_logs(item['id'], limit=200)
+    return TaskStatus(**item)
+
+
+@app.on_event('startup')
+async def recover_tasks_on_startup():
+    for task_id in task_store.recover_after_restart():
+        asyncio.create_task(start_task(task_id))
 
 @app.get("/", include_in_schema=False)
 async def root():
@@ -146,54 +156,109 @@ async def models(user=Depends(current_user)):
 
 @app.post("/tasks", response_model=TaskStatus, status_code=202)
 async def create_task(request: TaskRequest, user=Depends(current_user)):
-    task_id = uuid.uuid4().hex[:12]
-    item = {"id":task_id,"owner_id":user['id'],"instruction":request.instruction,"start_url":request.start_url,"timeout_seconds":request.timeout_seconds,"status":"queued","progress":"Queued; waiting for the single execution slot.","human_help":None,"waiting_details":None,"created_at":now_utc(),"updated_at":now_utc(),"result":None,"error":None,"provider":request.provider,"model":request.model}
-    task_resume_events[task_id] = asyncio.Event()
-    async with task_lock:
-        tasks[task_id] = item
-        while len(tasks) > settings.max_task_history: tasks.popitem(last=False)
-    asyncio.create_task(run_task(task_id, request))
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model)
+    asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
-async def run_task(task_id, request):
+
+async def start_task(task_id: str):
+    if task_id in task_handles and not task_handles[task_id].done():
+        return
+    handle = asyncio.create_task(run_task(task_id))
+    task_handles[task_id] = handle
+    try:
+        await handle
+    finally:
+        task_handles.pop(task_id, None)
+
+
+async def run_task(task_id: str):
+    worker_token = f'worker-{id(asyncio.current_task())}'
+    if not task_store.claim_task(task_id, worker_token):
+        return
+    item = task_store.get_task(task_id)
+    if not item:
+        return
+    cancel_event = asyncio.Event()
+    resume_event = asyncio.Event()
+    task_cancel_events[task_id] = cancel_event
+    task_resume_events[task_id] = resume_event
     async with execution_lock:
-        item = tasks.get(task_id)
-        if not item: return
-        item['status']='running'; item['progress']='Starting task execution.'; item['updated_at']=now_utc()
-        async def progress(message):
-            item['progress'] = message
-            item['updated_at'] = now_utc()
-        async def on_waiting_human(details):
-            item['status'] = 'waiting_human'
-            item['human_help'] = 'Complete the challenge in the browser verification panel, then resume the task.'
-            item['waiting_details'] = details
-            item['updated_at'] = now_utc()
         try:
-            resume_event = task_resume_events.get(task_id)
-            item['result'] = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id), timeout=request.timeout_seconds or settings.task_timeout_seconds)
-            item['progress']='Task completed with verified actions.'; item['status']='completed'; item['human_help']=None; item['waiting_details']=None
+            task_store.set_state(task_id, 'running', progress='Starting task execution.')
+            async def progress(message):
+                if task_store.is_cancel_requested(task_id):
+                    cancel_event.set()
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError()
+                task_store.set_state(task_id, 'running', progress=message)
+            async def on_waiting_human(details):
+                task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', human_help='Complete the challenge in the browser verification panel, then resume the task.', waiting_details=details)
+            request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'))
+            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event), timeout=request.timeout_seconds or settings.task_timeout_seconds)
+            task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
+        except asyncio.CancelledError:
+            task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
         except HumanInterventionRequired as exc:
-            item['error']=str(exc)[:400]; item['human_help']='Complete the challenge manually, then call POST /tasks/{id}/resume.'; item['progress']='Paused for required human verification.'; item['status']='waiting_human'
+            task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
         except Exception as exc:
             logging.exception('Task %s failed', task_id)
-            item['error']=f"{type(exc).__name__}: {str(exc)[:400]}"; item['human_help']=None; item['waiting_details']=None; item['progress']='Task failed; see the error for details.'; item['status']='failed'
+            task_store.set_state(task_id, 'failed', progress='Task failed; see the error for details.', error=f'{type(exc).__name__}: {str(exc)[:400]}')
         finally:
-            item['updated_at']=now_utc()
+            task_store.release_worker(task_id)
+            task_cancel_events.pop(task_id, None)
             task_resume_events.pop(task_id, None)
 
-@app.post("/tasks/{task_id}/resume", response_model=TaskStatus, status_code=202)
-async def resume_task(task_id: str, user=Depends(current_user)):
-    item = tasks.get(task_id)
-    if not item or item.get('owner_id') != user['id']:
-        raise HTTPException(status_code=404, detail="Task not found or history expired")
+
+def _task_for_user(task_ref: str, user):
+    item = task_store.get_task(task_ref, owner_id=user['id'])
+    if not item:
+        raise HTTPException(status_code=404, detail='Task not found')
+    return item
+
+
+@app.get('/tasks/{task_ref}/logs')
+async def task_logs(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    return {'task_id': item['id'], 'slug': item['slug'], 'logs': task_store.get_logs(item['id'], owner_id=user['id'], limit=500)}
+
+
+@app.post('/tasks/{task_ref}/cancel', response_model=TaskStatus, status_code=202)
+async def cancel_task(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    if item['status'] in {'completed','failed','cancelled'}:
+        raise HTTPException(status_code=409, detail='Task is already terminal')
+    if not task_store.request_cancel(item['id']):
+        raise HTTPException(status_code=409, detail='Task cannot be cancelled in its current state')
+    event = task_cancel_events.get(item['id'])
+    if event: event.set()
+    handle = task_handles.get(item['id'])
+    if handle and not handle.done(): handle.cancel()
+    return snapshot(task_store.get_task(item['id'], owner_id=user['id']))
+
+
+@app.post('/tasks/{task_ref}/retry', response_model=TaskStatus, status_code=202)
+async def retry_task(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    retried = task_store.queue_retry(item['id'])
+    if not retried:
+        raise HTTPException(status_code=409, detail='Task is not eligible for a bounded retry')
+    asyncio.create_task(start_task(item['id']))
+    return snapshot(retried)
+
+
+@app.post("/tasks/{task_ref}/resume", response_model=TaskStatus, status_code=202)
+async def resume_task(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
     if item.get('status') != 'waiting_human':
-        raise HTTPException(status_code=409, detail="Task is not waiting for human verification")
-    event = task_resume_events.get(task_id)
-    if event is None or browser.current_page is None or browser.current_task_id != task_id:
-        raise HTTPException(status_code=409, detail="The active browser session is no longer available")
-    item['status']='running'; item['progress']='Resuming after human verification.'; item['error']=None; item['human_help']=None; item['waiting_details']=None; item['updated_at']=now_utc()
+        raise HTTPException(status_code=409, detail='Task is not waiting for human verification')
+    event = task_resume_events.get(item['id'])
+    if event is None or browser.current_page is None or browser.current_task_id != item['id']:
+        raise HTTPException(status_code=409, detail='The active browser session is no longer available')
+    task_store.set_state(item['id'], 'running', progress='Resuming after human verification.')
     event.set()
-    return snapshot(item)
+    return snapshot(task_store.get_task(item['id'], owner_id=user['id']))
+
 
 class BrowserActionRequest(BaseModel):
     action: str
@@ -203,66 +268,65 @@ class BrowserActionRequest(BaseModel):
     x: int | None = None
     y: int | None = None
 
-def _waiting_browser(task_id, user):
-    item = tasks.get(task_id)
-    if not item or item.get('owner_id') != user['id']:
-        raise HTTPException(status_code=404, detail="Task not found or history expired")
-    if item.get('status') != 'waiting_human' or browser.current_page is None or browser.current_task_id != task_id:
-        raise HTTPException(status_code=409, detail="Task is not waiting for browser verification")
+
+def _waiting_browser(task_ref, user):
+    item = _task_for_user(task_ref, user)
+    if item.get('status') != 'waiting_human' or browser.current_page is None or browser.current_task_id != item['id']:
+        raise HTTPException(status_code=409, detail='Task is not waiting for browser verification')
     return item, browser.current_page
 
-@app.get("/tasks/{task_id}/screenshot")
-async def task_screenshot(task_id: str, user=Depends(current_user)):
-    _, page = _waiting_browser(task_id, user)
+
+@app.get('/tasks/{task_ref}/screenshot')
+async def task_screenshot(task_ref: str, user=Depends(current_user)):
+    _, page = _waiting_browser(task_ref, user)
     try:
         image = await page.screenshot(type='png')
-        return Response(content=image, media_type='image/png', headers={"Cache-Control":"no-store"})
+        return Response(content=image, media_type='image/png', headers={'Cache-Control':'no-store'})
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Could not capture browser screenshot: {type(exc).__name__}")
+        raise HTTPException(status_code=502, detail=f'Could not capture browser screenshot: {type(exc).__name__}')
 
-@app.post("/tasks/{task_id}/browser-action")
-async def task_browser_action(task_id: str, payload: BrowserActionRequest, user=Depends(current_user)):
-    item, page = _waiting_browser(task_id, user)
+
+@app.post('/tasks/{task_ref}/browser-action')
+async def task_browser_action(task_ref: str, payload: BrowserActionRequest, user=Depends(current_user)):
+    item, page = _waiting_browser(task_ref, user)
     try:
         action = payload.action.lower()
         if action == 'click':
-            if payload.x is not None and payload.y is not None:
-                await page.mouse.click(payload.x, payload.y)
+            if payload.x is not None and payload.y is not None: await page.mouse.click(payload.x, payload.y)
             elif payload.target:
                 from app.runner import _locate
                 await (await _locate(page, payload.target)).click()
-            else:
-                raise HTTPException(status_code=422, detail="click requires target or x and y")
+            else: raise HTTPException(status_code=422, detail='click requires target or x and y')
         elif action == 'fill':
-            if not payload.target:
-                raise HTTPException(status_code=422, detail="fill requires target")
+            if not payload.target: raise HTTPException(status_code=422, detail='fill requires target')
             from app.runner import _locate
             await (await _locate(page, payload.target)).fill(payload.value or '')
         elif action == 'press':
-            if not payload.target:
-                raise HTTPException(status_code=422, detail="press requires target")
+            if not payload.target: raise HTTPException(status_code=422, detail='press requires target')
             from app.runner import _locate
             await (await _locate(page, payload.target)).press(payload.key or 'Enter')
-        elif action == 'scroll':
-            await page.mouse.wheel(payload.x or 0, payload.y or 500)
+        elif action == 'scroll': await page.mouse.wheel(payload.x or 0, payload.y or 500)
         elif action == 'inspect':
             from app.runner import _snapshot
             return await _snapshot(page)
-        else:
-            raise HTTPException(status_code=422, detail="Supported actions: click, fill, press, scroll, inspect")
-        item['updated_at'] = now_utc()
-        return {"ok":True,"action":action,"url":page.url}
-    except HTTPException:
-        raise
+        else: raise HTTPException(status_code=422, detail='Supported actions: click, fill, press, scroll, inspect')
+        task_store.add_log(item['id'], f'Authorized browser action completed: {action}')
+        return {'ok':True,'action':action,'url':page.url}
+    except HTTPException: raise
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Browser action failed: {type(exc).__name__}: {str(exc)[:180]}")
+        raise HTTPException(status_code=422, detail=f'Browser action failed: {type(exc).__name__}: {str(exc)[:180]}')
 
-@app.get("/tasks", response_model=list[TaskStatus])
+
+@app.get('/tasks', response_model=list[TaskStatus])
 async def list_tasks(user=Depends(current_user)):
-    return [snapshot(x) for x in reversed(list(tasks.values())) if x.get('owner_id') == user['id']]
+    return [snapshot(item) for item in task_store.list_tasks(user['id'], settings.max_task_history)]
 
-@app.get("/tasks/{task_id}", response_model=TaskStatus)
-async def get_task(task_id: str, user=Depends(current_user)):
-    item = tasks.get(task_id)
-    if not item or item.get('owner_id') != user['id']: raise HTTPException(status_code=404, detail="Task not found or history expired")
-    return snapshot(item)
+
+@app.get('/tasks/{task_ref}', response_model=TaskStatus)
+async def get_task(task_ref: str, user=Depends(current_user)):
+    return snapshot(_task_for_user(task_ref, user))
+
+
+@app.get('/tasks/{task_ref}/session', include_in_schema=False)
+async def task_session(task_ref: str):
+    return FileResponse(Path(__file__).parent / 'static' / 'task.html')

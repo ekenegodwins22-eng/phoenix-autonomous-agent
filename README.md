@@ -82,3 +82,12 @@ pytest -q
 - Free Render services spin down after 15 minutes idle and local files are lost on spin-down/redeploy. Use a persistent storage option for the SQLite database or use managed Postgres before relying on saved accounts.
 - The included `render.yaml` is a starting point; set the provider environment variables in the Render dashboard.
 - Keep the app behind auth. Do not expose a public service with a default `AUTH_SECRET`.
+
+
+## Durable task sessions
+
+Tasks are persisted in SQLite and dispatched by a single server-side worker slot, so closing or refreshing the frontend does not cancel them. Every task receives a collision-resistant slug and a `session_url`, for example `/tasks/register-service-a8f31c/session`. The dedicated session page reads the authenticated task record and displays status, actual progress, timestamps, result, errors, and durable logs.
+
+Use `GET /tasks/{id}` or `GET /tasks/{slug}` to reconnect, `GET /tasks/{id}/logs` for task history, `POST /tasks/{id}/cancel` for server-side cancellation, and `POST /tasks/{id}/retry` for a bounded explicit retry. Startup recovery re-queues only safely queued tasks. A task already claimed by a worker is marked failed after a process restart instead of being replayed, because a browser form submission or other non-idempotent action may have an uncertain outcome. Duplicate worker claims are rejected transactionally.
+
+The Render blueprint points `DATABASE_PATH` to `/app/data/phoenix.db`. A persistent Render disk or external database is required for task and account survival across redeploys or ephemeral filesystem loss. The single web service provides the worker; task execution does not depend on the frontend connection remaining open.

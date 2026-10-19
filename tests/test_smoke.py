@@ -60,6 +60,42 @@ def test_tasks_require_auth():
     assert response.status_code == 401
 
 
+def test_durable_tasks_have_unique_slugs_and_persist_logs(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'tasks.db'))
+    first = task_store.create_task(owner_id=7, instruction='Register service', start_url=None, timeout_seconds=30, provider='primary', model='model-a')
+    second = task_store.create_task(owner_id=7, instruction='Register service', start_url=None, timeout_seconds=30, provider='primary', model='model-a')
+    assert first['id'] != second['id']
+    assert first['slug'] != second['slug']
+    assert task_store.get_task(first['slug'], owner_id=7)['instruction'] == 'Register service'
+    task_store.add_log(first['id'], 'Verified navigation complete')
+    assert task_store.get_logs(first['id'], owner_id=7)[-1]['message'] == 'Verified navigation complete'
+
+
+def test_task_claim_prevents_duplicate_workers(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'claim.db'))
+    task = task_store.create_task(owner_id=1, instruction='Inspect', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    assert task_store.claim_task(task['id'], 'worker-a') is True
+    assert task_store.claim_task(task['id'], 'worker-b') is False
+
+
+def test_task_cancellation_is_server_side_and_restart_does_not_replay(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'recovery.db'))
+    queued = task_store.create_task(owner_id=1, instruction='Queued task', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    recoverable = task_store.create_task(owner_id=1, instruction='Recoverable task', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    active = task_store.create_task(owner_id=1, instruction='Active task', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    assert task_store.request_cancel(queued['id']) is True
+    assert task_store.is_cancel_requested(queued['id']) is True
+    assert task_store.claim_task(active['id'], 'worker-a') is True
+    restart_queue = task_store.recover_after_restart()
+    assert recoverable['id'] in restart_queue
+    assert task_store.get_task(queued['id'])['status'] == 'cancelled'
+    assert task_store.get_task(active['id'])['status'] == 'failed'
+    assert 'not replayed' in task_store.get_task(active['id'])['error']
+
+
 def test_registration_has_no_verification(monkeypatch, tmp_path):
     from app import config, auth
     monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'users.db'))

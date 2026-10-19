@@ -14,8 +14,9 @@ class TaskRequest(BaseModel):
 
 class TaskStatus(BaseModel):
     id: str
+    slug: str = ""
     instruction: str
-    status: Literal["queued", "running", "waiting_human", "completed", "failed"]
+    status: Literal["queued", "running", "waiting_human", "recovering", "completed", "failed", "cancelled"]
     progress: str | None = None
     human_help: str | None = None
     waiting_details: dict | None = None
@@ -25,3 +26,7 @@ class TaskStatus(BaseModel):
     error: str | None = None
     provider: str | None = None
     model: str | None = None
+    recovery_count: int = 0
+    cancel_requested: bool = False
+    session_url: str | None = None
+    logs: list[dict] = Field(default_factory=list)

@@ -54,3 +54,12 @@ Render's free web service is for testing: it sleeps after inactivity and its loc
 - `/health` reports sanitized browser availability, disk, memory, active browser-process count, and a timestamp. Authenticated `GET /runtime/status` returns the full runtime diagnostic.
 - The agent checks disk and memory before launching a browser and removes only expired entries under `RUNTIME_TEMP_DIR` after safe task cleanup. It never removes the database, credentials, browser binaries, or files outside that designated directory.
 - Set `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` and `RUNTIME_TEMP_DIR=/tmp/phoenix` in Render. A redeploy is required after changing the Dockerfile or runtime module.
+
+
+## Durable task sessions
+
+- `MAX_TASK_RECOVERY_ATTEMPTS` defaults to `2` and bounds explicit retries.
+- Tasks are persisted at `DATABASE_PATH` and receive a unique slug plus `/tasks/{slug}/session` URL. Closing the frontend does not stop the server worker.
+- `POST /tasks/{id}/cancel` performs server-side cancellation; `GET /tasks/{id}/logs` returns persisted task history.
+- On process restart, only safely queued tasks are re-dispatched. Tasks already claimed by a worker are marked failed rather than replayed, preventing duplicate non-idempotent browser actions.
+- Configure a persistent Render disk mounted at `/app/data`, or use an external database, before relying on task/session survival across deploys or ephemeral filesystem loss.

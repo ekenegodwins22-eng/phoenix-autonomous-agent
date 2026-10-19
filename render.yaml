@@ -37,3 +37,5 @@ services:
         value: "268435456"
       - key: MAXIMUM_MEMORY_USED_PERCENT
         value: "92"
+      - key: MAX_TASK_RECOVERY_ATTEMPTS
+        value: "2"
