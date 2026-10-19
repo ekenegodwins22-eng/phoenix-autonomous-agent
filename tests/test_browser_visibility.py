@@ -8,6 +8,9 @@ def test_task_session_contains_authenticated_remote_browser_controls():
     assert "'/tasks/'+ref+'/browser-stream'" in html
     assert "'/tasks/'+ref+'/browser-action'" in html
     assert 'Start live browser' in html
+    assert 'browserTap(event)' in html
+    assert 'scrollBrowser(-650)' in html
+    assert '<details>' in html
     assert "control('resume')" in html
 
 
@@ -26,4 +29,4 @@ def test_task_session_shell_is_available_for_mobile_reconnect():
     response = TestClient(app).get('/tasks/example/session')
     assert response.status_code == 200
     assert 'Remote browser verification' in response.text
-    assert response.headers.get('cache-control') == 'no-cache'
+    assert 'no-store' in response.headers.get('cache-control', '')
