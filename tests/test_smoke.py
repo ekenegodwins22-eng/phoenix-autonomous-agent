@@ -9,6 +9,17 @@ def test_health():
     assert 'resources' in response.json()
 
 
+def test_health_uses_fast_browser_presence_check(monkeypatch):
+    from app import main
+    seen = {}
+    def fake_status(*, verify_launch=True):
+        seen['verify_launch'] = verify_launch
+        return {'available': True, 'error': None}
+    monkeypatch.setattr(main, 'browser_installation_status', fake_status)
+    assert TestClient(app).get('/health').status_code == 200
+    assert seen['verify_launch'] is False
+
+
 def test_runtime_status_requires_auth():
     assert TestClient(app).get('/runtime/status').status_code == 401
 

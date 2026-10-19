@@ -85,7 +85,17 @@ def cleanup_runtime_temp() -> dict:
     return {'directory': str(root), 'removed_entries': removed, 'bytes_freed': bytes_freed}
 
 
-def browser_installation_status() -> dict:
+def browser_installation_status(*, verify_launch: bool = True) -> dict:
+    if not verify_launch:
+        roots = [Path(settings.playwright_browsers_path), Path.home() / '.cache' / 'ms-playwright']
+        candidates = []
+        for root in roots:
+            if not root.exists():
+                continue
+            candidates.extend(root.glob('chromium*/**/chrome'))
+            candidates.extend(root.glob('chromium_headless_shell*/**/chrome-headless-shell'))
+        executable = next((item for item in candidates if item.is_file() and os.access(item, os.X_OK)), None)
+        return {'available': executable is not None, 'executable': str(executable) if executable else None, 'playwright_browsers_path': os.environ.get('PLAYWRIGHT_BROWSERS_PATH', settings.playwright_browsers_path), 'error': None if executable else 'Chromium executable is missing or not executable'}
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
