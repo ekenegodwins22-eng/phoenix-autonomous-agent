@@ -42,7 +42,7 @@ async def root():
 @app.get("/health")
 async def health():
     installation, resources = await asyncio.gather(asyncio.to_thread(browser_installation_status, verify_launch=False), asyncio.to_thread(resource_status))
-    return {"status":"ok","browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume","browser":{"available":installation.get('available'),"error":installation.get('error')},"resources":{"disk":resources.get('disk'),"memory":resources.get('memory'),"browser_processes":resources.get('browser_processes'),"timestamp":resources.get('timestamp')}}
+    return {"status":"ok","database":"postgresql" if settings.database_url else "sqlite","browser_policy":"one active browser session; retained during human verification and closed afterward","max_agent_steps":settings.max_agent_steps,"auth":"email-password; no email verification","model_selection":True,"captcha":"detect-and-pause-with-same-session-resume","browser":{"available":installation.get('available'),"error":installation.get('error')},"resources":{"disk":resources.get('disk'),"memory":resources.get('memory'),"browser_processes":resources.get('browser_processes'),"timestamp":resources.get('timestamp')}}
 
 @app.get('/runtime/status')
 async def runtime_status(user=Depends(current_user)):
