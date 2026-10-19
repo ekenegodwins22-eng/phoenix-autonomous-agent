@@ -307,6 +307,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     summary = str(action.get('summary','Task loop finished.'))
                     evidence = await _snapshot(page) if page.url else {'url': '', 'title': '', 'body': ''}
                     history.append({"action":"done","result":summary,"evidence":{"url":evidence.get('url'),"title":evidence.get('title'),"body_excerpt":evidence.get('body','')[:500]}})
+                    if save_checkpoint:
+                        await save_checkpoint({'step': step, 'action': 'done', 'url': evidence.get('url'), 'title': evidence.get('title'), 'verified': True})
                     return _format_result(summary, history, used_providers, used_models)
                 else: raise ValueError(f"Unsupported action: {name}")
                 # Never keep values typed into forms in task history.

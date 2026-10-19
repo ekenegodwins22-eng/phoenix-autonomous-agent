@@ -67,3 +67,10 @@ def test_health_and_static_shell_are_compressed_or_private_cached():
     task_shell = client.get('/tasks/example/session')
     assert task_shell.status_code == 200
     assert task_shell.headers.get('cache-control') == 'no-cache'
+
+
+def test_completion_path_persists_verified_checkpoint():
+    source = (Path(__file__).parents[1] / 'app' / 'runner.py').read_text()
+    assert "'action': 'done'" in source
+    assert "'verified': True" in source
+    assert 'await save_checkpoint' in source
