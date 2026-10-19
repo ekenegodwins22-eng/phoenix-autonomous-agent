@@ -5,14 +5,14 @@ from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from app.config import settings
 from app.models import TaskRequest, TaskStatus, TaskMessage, TaskMessageRequest, now_utc
-from app.runner import HumanInterventionRequired, TaskBlocked, TaskIncomplete, execute_task
+from app.agent.execution_loop import HumanInterventionRequired, TaskBlocked, TaskIncomplete, execute_task
 from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
 from app.providers import available_models
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
-from app import task_store
-from app.instructions import InstructionConfigError, instruction_status
+from app.agent.task_manager import task_manager as task_store
+from app.agent.prompt_loader import InstructionConfigError, instruction_status
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
@@ -33,7 +33,7 @@ def snapshot(item):
 
 @app.on_event('startup')
 async def recover_tasks_on_startup():
-    for task_id in task_store.recover_after_restart():
+    for task_id in task_store.recover_interrupted():
         asyncio.create_task(start_task(task_id))
 
 @app.get("/", include_in_schema=False)

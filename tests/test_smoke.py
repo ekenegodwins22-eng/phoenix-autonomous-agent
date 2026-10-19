@@ -235,9 +235,10 @@ def test_missing_agent_md_is_a_configuration_error(monkeypatch):
     import asyncio
     from pathlib import Path
     import pytest
-    from app import instructions, runner
-    monkeypatch.setattr(instructions, 'AGENT_PATH', Path('/tmp/phoenix-agent-file-that-does-not-exist'))
-    with pytest.raises(instructions.InstructionConfigError):
+    from app import runner
+    from app.agent import prompt_loader
+    monkeypatch.setattr(prompt_loader, 'AGENT_PATH', Path('/tmp/phoenix-agent-file-that-does-not-exist'))
+    with pytest.raises(prompt_loader.InstructionConfigError):
         asyncio.run(runner._choose_action('Inspect', [], {'url':'https://example.test'}, 1, 'primary', 'test-model'))
 
 

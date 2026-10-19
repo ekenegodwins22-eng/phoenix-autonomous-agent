@@ -7,7 +7,7 @@ from app.mailbox import mailbox
 from app.config import settings
 from app.credentials import generate_value
 from app.form_data import synthetic_profile, classify_field, constrained_value
-from app.instructions import InstructionConfigError, load_agent_instructions
+from app.agent.prompt_loader import InstructionConfigError, build_effective_instructions
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -59,7 +59,7 @@ async def _snapshot(page):
     return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_info(body, controls)}
 
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
-    agent_instructions, instruction_version = load_agent_instructions()
+    agent_instructions, instruction_version, _ = build_effective_instructions()
     system_prompt = SYSTEM + "\n\nACTIVE AGENT INSTRUCTIONS (version " + instruction_version + "):\n" + agent_instructions
     prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
     last_provider, last_model = provider_choice, model
