@@ -67,9 +67,13 @@ def register_user(email: str, password: str):
     normalized = email.strip().lower()
     conn = _connect()
     try:
-        cur = conn.execute("INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?)", (normalized, _hash_password(password), int(time.time())))
+        insert_sql = "INSERT INTO users(email,password_hash,created_at) VALUES(?,?,?)"
+        if using_postgres():
+            insert_sql += " RETURNING id"
+        cur = conn.execute(insert_sql, (normalized, _hash_password(password), int(time.time())))
         conn.commit()
-        row = conn.execute("SELECT id,email,created_at FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+        user_id = cur.fetchone()['id'] if using_postgres() else cur.lastrowid
+        row = conn.execute("SELECT id,email,created_at FROM users WHERE id=?", (user_id,)).fetchone()
         return dict(row)
     except Exception as exc:
         if isinstance(exc, sqlite3.IntegrityError) or exc.__class__.__name__ == 'UniqueViolation':
