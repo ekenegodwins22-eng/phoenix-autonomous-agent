@@ -91,3 +91,8 @@ Tasks are persisted in SQLite and dispatched by a single server-side worker slot
 Use `GET /tasks/{id}` or `GET /tasks/{slug}` to reconnect, `GET /tasks/{id}/logs` for task history, `POST /tasks/{id}/cancel` for server-side cancellation, and `POST /tasks/{id}/retry` for a bounded explicit retry. Startup recovery re-queues only safely queued tasks. A task already claimed by a worker is marked failed after a process restart instead of being replayed, because a browser form submission or other non-idempotent action may have an uncertain outcome. Duplicate worker claims are rejected transactionally.
 
 The Render blueprint points `DATABASE_PATH` to `/app/data/phoenix.db`. A persistent Render disk or external database is required for task and account survival across redeploys or ephemeral filesystem loss. The single web service provides the worker; task execution does not depend on the frontend connection remaining open.
+
+
+## Phoenix chat resilience
+
+Phoenix `/chat` calls retry only transient upstream failures (`502`, `503`, `504`) and network request errors. The default is three total attempts with exponential delays of `0.5s`, `1s`, and a configurable maximum of `8s`; authentication, validation, model-selection, and other permanent HTTP errors are not retried. Configure `PRIMARY_CHAT_RETRY_ATTEMPTS`, `PRIMARY_CHAT_RETRY_BASE_SECONDS`, and `PRIMARY_CHAT_RETRY_MAX_SECONDS` as needed.

@@ -1,11 +1,17 @@
 """Provider clients for Phoenix AI Router and optional Google Gemini."""
 from collections.abc import AsyncIterator
+import asyncio
 import json
+import logging
 import httpx
 from app.config import settings
 
 class ProviderError(RuntimeError):
     pass
+
+
+log = logging.getLogger(__name__)
+TRANSIENT_CHAT_STATUS_CODES = {502, 503, 504}
 
 def _primary_headers() -> dict[str, str]:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -82,9 +88,26 @@ def _prompt(messages) -> str:
 
 async def primary_chat(messages, model=None) -> str:
     chosen_model = await _validated_primary_model(model)
+    payload = {"model": chosen_model, "message": _prompt(messages)}
+    attempts = max(1, settings.primary_chat_retry_attempts)
     try:
-        async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
-            response = await client.post(_primary_url("chat"), headers=_primary_headers(), json={"model": chosen_model, "message": _prompt(messages)})
+        response = None
+        for attempt in range(attempts):
+            try:
+                async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
+                    response = await client.post(_primary_url("chat"), headers=_primary_headers(), json=payload)
+            except httpx.RequestError as exc:
+                if attempt + 1 >= attempts:
+                    raise ProviderError(f"Phoenix AI chat failed: {type(exc).__name__}") from exc
+                delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
+                log.warning("Phoenix AI /chat transient network failure (%s); retrying in %.2fs (%d/%d)", type(exc).__name__, delay, attempt + 1, attempts - 1)
+                await asyncio.sleep(delay)
+                continue
+            if response.status_code not in TRANSIENT_CHAT_STATUS_CODES or attempt + 1 >= attempts:
+                break
+            delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
+            log.warning("Phoenix AI /chat returned HTTP %s; retrying in %.2fs (%d/%d)", response.status_code, delay, attempt + 1, attempts - 1)
+            await asyncio.sleep(delay)
         _raise_upstream(response, "/chat")
         return _extract_chat_text(response.json())
     except ProviderError: raise

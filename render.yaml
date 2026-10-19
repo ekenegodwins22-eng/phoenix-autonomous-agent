@@ -9,6 +9,12 @@ services:
         value: https://concerned-swordfish-suhailtechlnfo-01fd2de0.koyeb.app
       - key: PRIMARY_API_KEY
         sync: false
+      - key: PRIMARY_CHAT_RETRY_ATTEMPTS
+        value: "3"
+      - key: PRIMARY_CHAT_RETRY_BASE_SECONDS
+        value: "0.5"
+      - key: PRIMARY_CHAT_RETRY_MAX_SECONDS
+        value: "8"
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODELS

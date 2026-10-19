@@ -293,3 +293,50 @@ def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     asyncio.run(run())
     assert [path for _, path, _, _ in seen] == ['/available-models', '/chat', '/available-models', '/chat/stream']
     assert all(key == 'test-secret' for _, _, key, _ in seen)
+
+
+def test_phoenix_chat_retries_transient_502_with_bounded_backoff(monkeypatch):
+    import asyncio
+    import httpx
+    from app import config, providers
+    calls = {'chat': 0}
+    def handler(request):
+        if request.url.path == '/available-models':
+            return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
+        if request.url.path == '/chat':
+            calls['chat'] += 1
+            if calls['chat'] < 3:
+                return httpx.Response(502, json={'detail': 'upstream unavailable'})
+            return httpx.Response(200, json={'response': 'recovered'})
+        return httpx.Response(404)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 3)
+    monkeypatch.setattr(config.settings, 'primary_chat_retry_base_seconds', 0)
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    assert asyncio.run(providers.primary_chat([{'role':'user','content':'hello'}], 'live-model')) == 'recovered'
+    assert calls['chat'] == 3
+
+
+def test_phoenix_chat_does_not_retry_authentication_errors(monkeypatch):
+    import asyncio
+    import httpx
+    from app import config, providers
+    calls = {'chat': 0}
+    def handler(request):
+        if request.url.path == '/available-models':
+            return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
+        calls['chat'] += 1
+        return httpx.Response(401, json={'detail': 'Not authenticated'})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    try:
+        asyncio.run(providers.primary_chat([{'role':'user','content':'hello'}], 'live-model'))
+    except providers.ProviderError:
+        pass
+    else:
+        raise AssertionError('Expected ProviderError')
+    assert calls['chat'] == 1

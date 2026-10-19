@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     primary_api_key: str = ""
     primary_model: str = ""
     primary_timeout_seconds: float = 60
+    primary_chat_retry_attempts: int = 3
+    primary_chat_retry_base_seconds: float = 0.5
+    primary_chat_retry_max_seconds: float = 8
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro"
