@@ -97,7 +97,7 @@ The dedicated task session page includes a persistent bottom chat composer. Mess
 
 ## Phoenix chat resilience
 
-Phoenix `/chat` calls retry only transient upstream failures (`502`, `503`, `504`) and network request errors. The default is three total attempts with exponential delays of `0.5s`, `1s`, and a configurable maximum of `8s`; authentication, validation, model-selection, and other permanent HTTP errors are not retried. Configure `PRIMARY_CHAT_RETRY_ATTEMPTS`, `PRIMARY_CHAT_RETRY_BASE_SECONDS`, and `PRIMARY_CHAT_RETRY_MAX_SECONDS` as needed.
+Phoenix `/chat` calls retry only transient upstream failures (`502`, `503`, `504`) and network request errors. The default is three total attempts with exponential delays of `0.5s`, `1s`, and a configurable maximum of `8s`; authentication, validation, model-selection, and other permanent HTTP errors are not retried. Model-catalog discovery also uses a short-lived in-process cache and bounded timeout retry so every agent turn does not repeat the same catalog request. Configure `PRIMARY_CHAT_RETRY_ATTEMPTS`, `PRIMARY_CHAT_RETRY_BASE_SECONDS`, `PRIMARY_CHAT_RETRY_MAX_SECONDS`, `PRIMARY_MODEL_CACHE_SECONDS`, and `PRIMARY_MODEL_DISCOVERY_ATTEMPTS` as needed.
 
 ## Smart form filling
 

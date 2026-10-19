@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     primary_chat_retry_attempts: int = 3
     primary_chat_retry_base_seconds: float = 0.5
     primary_chat_retry_max_seconds: float = 8
+    primary_model_cache_seconds: float = 30
+    primary_model_discovery_attempts: int = 2
+    primary_model_discovery_retry_base_seconds: float = 0.5
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro"

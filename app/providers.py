@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 import asyncio
 import json
 import logging
+import time
 import httpx
 from app.config import settings
 
@@ -12,6 +13,7 @@ class ProviderError(RuntimeError):
 
 log = logging.getLogger(__name__)
 TRANSIENT_CHAT_STATUS_CODES = {502, 503, 504}
+_model_cache: tuple[str, float, list[str]] | None = None
 
 def _primary_headers() -> dict[str, str]:
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -51,17 +53,35 @@ def _extract_model_ids(data) -> list[str]:
 async def primary_models() -> list[str]:
     if not settings.primary_api_key:
         raise ProviderError("PRIMARY_API_KEY is not configured")
-    try:
-        async with httpx.AsyncClient(timeout=min(settings.primary_timeout_seconds, 20)) as client:
-            response = await client.get(_primary_url("available-models"), headers=_primary_headers())
-        _raise_upstream(response, "/available-models")
-        data = response.json()
-    except ProviderError: raise
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ProviderError(f"Phoenix AI model discovery failed: {type(exc).__name__}") from exc
-    models = _extract_model_ids(data)
-    if not models: raise ProviderError("Phoenix AI /available-models returned no recognizable model IDs")
-    return models
+    global _model_cache
+    cache_key = settings.primary_base_url.rstrip('/')
+    now = time.monotonic()
+    if _model_cache and _model_cache[0] == cache_key and now - _model_cache[1] < settings.primary_model_cache_seconds:
+        return list(_model_cache[2])
+    attempts = max(1, settings.primary_model_discovery_attempts)
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=min(settings.primary_timeout_seconds, 20)) as client:
+                response = await client.get(_primary_url("available-models"), headers=_primary_headers())
+            _raise_upstream(response, "/available-models")
+            models = _extract_model_ids(response.json())
+            if not models:
+                raise ProviderError("Phoenix AI /available-models returned no recognizable model IDs")
+            _model_cache = (cache_key, time.monotonic(), models)
+            return models
+        except ProviderError as exc:
+            last_error = exc
+            retryable = 'HTTP 502' in str(exc) or 'HTTP 503' in str(exc) or 'HTTP 504' in str(exc)
+        except (httpx.HTTPError, ValueError) as exc:
+            last_error = ProviderError(f"Phoenix AI model discovery failed: {type(exc).__name__}")
+            retryable = True
+        if not retryable or attempt + 1 >= attempts:
+            raise last_error from last_error
+        delay = min(settings.primary_model_discovery_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
+        log.warning("Phoenix AI /available-models failed (%s); retrying in %.2fs (%d/%d)", last_error, delay, attempt + 1, attempts - 1)
+        await asyncio.sleep(delay)
+    raise last_error
 
 def _extract_chat_text(data) -> str:
     if isinstance(data, str): return data

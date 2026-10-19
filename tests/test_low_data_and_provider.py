@@ -14,6 +14,7 @@ def test_provider_502_identifies_selected_model(monkeypatch):
     real_client = httpx.AsyncClient
     monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
     monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
     try:
@@ -23,6 +24,27 @@ def test_provider_502_identifies_selected_model(monkeypatch):
         assert 'bad-model' in str(exc)
     else:
         raise AssertionError('Expected ProviderError')
+
+
+def test_model_discovery_retries_a_transient_timeout(monkeypatch):
+    import httpx
+    from app import config, providers
+
+    calls = {'count': 0}
+    def handler(request):
+        calls['count'] += 1
+        if calls['count'] == 1:
+            raise httpx.ReadTimeout('temporary catalog timeout')
+        return httpx.Response(200, json={'models': [{'id': 'recovered-model'}]})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://retry-router.test')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
+    monkeypatch.setattr(config.settings, 'primary_model_discovery_retry_base_seconds', 0)
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    assert asyncio.run(providers.primary_models()) == ['recovered-model']
+    assert calls['count'] == 2
 
 
 def test_frontends_use_adaptive_polling_and_stop_at_terminal_states():

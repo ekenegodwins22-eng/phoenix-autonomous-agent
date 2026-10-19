@@ -153,6 +153,7 @@ def test_phoenix_headers_use_x_api_key(monkeypatch):
     from app import config
     from app.providers import _primary_headers
     monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     headers = _primary_headers()
     assert headers['X-API-Key'] == 'test-secret'
     assert 'Authorization' not in headers
@@ -370,6 +371,7 @@ def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
 
@@ -399,6 +401,7 @@ def test_phoenix_chat_retries_transient_502_with_bounded_backoff(monkeypatch):
         return httpx.Response(404)
     real_client = httpx.AsyncClient
     monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 3)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_base_seconds', 0)
@@ -419,6 +422,7 @@ def test_phoenix_chat_does_not_retry_authentication_errors(monkeypatch):
         return httpx.Response(401, json={'detail': 'Not authenticated'})
     real_client = httpx.AsyncClient
     monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
     try:
