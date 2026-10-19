@@ -155,6 +155,11 @@ def add_log(task_id: str, message: str, level: str = 'info'):
         conn.commit()
 
 
+def save_checkpoint(task_id: str, checkpoint: dict):
+    """Persist only the caller-provided redacted execution checkpoint."""
+    _update(task_id, checkpoint=json.dumps(checkpoint, ensure_ascii=False)[:8000])
+
+
 def claim_task(task_id: str, worker_token: str) -> bool:
     with _connect() as conn:
         cur = conn.execute("UPDATE tasks SET status='running', worker_token=?, cancel_requested=0, updated_at=? WHERE id=? AND status='queued' AND worker_token IS NULL", (worker_token,_now(),task_id))

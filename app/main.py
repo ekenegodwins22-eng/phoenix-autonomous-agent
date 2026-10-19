@@ -196,8 +196,10 @@ async def run_task(task_id: str):
                 task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', human_help='Complete the challenge in the browser verification panel, then resume the task.', waiting_details=details)
             async def get_user_messages():
                 return task_store.claim_unconsumed_user_messages(task_id)
+            async def save_checkpoint(checkpoint):
+                task_store.save_checkpoint(task_id, checkpoint)
             request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'))
-            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages), timeout=request.timeout_seconds or settings.task_timeout_seconds)
+            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint), timeout=request.timeout_seconds or settings.task_timeout_seconds)
             task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
         except asyncio.CancelledError:
             task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')

@@ -45,3 +45,9 @@ services:
         value: "92"
       - key: MAX_TASK_RECOVERY_ATTEMPTS
         value: "2"
+      - key: TASK_TIMEOUT_SECONDS
+        value: "900"
+      - key: MAX_AGENT_STEPS
+        value: "60"
+      - key: MODEL_ACTION_RETRIES
+        value: "2"

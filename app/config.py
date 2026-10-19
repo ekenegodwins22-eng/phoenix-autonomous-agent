@@ -23,8 +23,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_task_history: int = 100
     max_task_recovery_attempts: int = 2
-    task_timeout_seconds: int = 300
-    max_agent_steps: int = 20
+    task_timeout_seconds: int = 900
+    max_agent_steps: int = 60
+    model_action_retries: int = 2
     browser_headless: bool = True
     browser_navigation_timeout_ms: int = 30000
     browser_action_timeout_ms: int = 10000

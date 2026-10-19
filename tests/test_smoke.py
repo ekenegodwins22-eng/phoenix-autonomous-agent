@@ -202,6 +202,29 @@ def test_browser_retry_recovers_from_transient_failure():
     assert attempts['count'] == 2
 
 
+def test_model_prose_gets_corrective_retry_instead_of_false_completion(monkeypatch):
+    import asyncio
+    from app import runner
+    responses = iter(['I will inspect the page first.', '{"action":"inspect"}'])
+    async def fake_chat(*args, **kwargs):
+        return next(responses), 'primary', 'test-model'
+    monkeypatch.setattr(runner, 'chat', fake_chat)
+    action, provider, model = asyncio.run(runner._choose_action('Inspect the page', [], {'url':'https://example.test'}, 1, 'primary', 'test-model'))
+    assert action == {'action': 'inspect'}
+    assert provider == 'primary'
+    assert model == 'test-model'
+
+
+def test_redacted_checkpoint_persists_last_verified_action(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'checkpoint.db'))
+    task = task_store.create_task(owner_id=3, instruction='Inspect', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    task_store.save_checkpoint(task['id'], {'step': 2, 'action': 'click', 'target': 'Next', 'url': 'https://example.test'})
+    saved = task_store.get_task(task['id'])['checkpoint']
+    assert 'click' in saved
+    assert 'password' not in saved.lower()
+
+
 def test_mailbox_finds_verification_code_without_returning_message_body():
     import asyncio
     from app.mailbox import MailboxClient

@@ -4,7 +4,7 @@
 - Primary LLM: Phoenix AI Router custom API. Models are discovered live through `GET /available-models`; prompts are sent to `POST /chat` using `{model, message}` and `X-API-Key`.
 - Fallback LLM: Google Gemini `generateContent` when primary fails.
 - Agent loop: each LLM turn chooses one structured browser or mailbox action; the next turn receives the observed page state and prior action results.
-- Recovery: navigation and common controls use one bounded retry, while ordinary JavaScript dialogs are dismissed to prevent deadlocks.
+- Recovery: navigation and common controls use bounded retries, model prose receives bounded corrective retries instead of being marked complete, and verified action checkpoints are persisted without form values or secrets.
 - Human handoff: visible CAPTCHA/human-verification indicators raise a controlled handoff, set task status to `waiting_human`, and expose `POST /tasks/{id}/resume`. No automated CAPTCHA solving or access-control bypass is implemented.
 - Browser resource policy: one asyncio lock around a browser session; one task execution lock; cleanup closes page, context, browser, then Playwright in `finally` after completion or after a human-verification resume cycle. While waiting, the authenticated task owner can inspect a screenshot and issue limited browser actions against the retained page.
 - Mailbox bridge: small HTTP client for the TempNest/Gmail alias API.
@@ -13,7 +13,7 @@
 
 ## Durable task worker
 
-- `app/task_store.py` persists task records and append-only task logs in SQLite. Each task has an ID, collision-resistant slug, owner, status, progress, result/error, recovery count, cancellation flag, and worker claim token.
+- `app/task_store.py` persists task records and append-only task logs in SQLite. Each task has an ID, collision-resistant slug, owner, status, progress, result/error, recovery count, cancellation flag, worker claim token, and redacted last-action checkpoint.
 - The web service owns a single bounded worker slot through `execution_lock`; transactional task claims prevent duplicate execution in the process.
 - The frontend receives a task immediately and may disconnect. The dedicated `/tasks/{slug}/session` shell reconnects through authenticated task APIs and does not own task lifetime.
 - On startup, safely queued tasks are dispatched. Tasks found in `running`, `recovering`, or `waiting_human` state are marked failed with a recovery log instead of replayed, preventing duplicate non-idempotent browser actions after an uncertain restart.

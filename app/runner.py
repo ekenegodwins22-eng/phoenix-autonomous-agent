@@ -51,14 +51,19 @@ async def _snapshot(page):
 
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
     prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
-    raw, provider, used_model = await chat([{"role":"system","content":SYSTEM}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
-    try:
-        match = re.search(r'\{.*\}', raw, re.S)
-        action = json.loads(match.group(0) if match else raw)
-        if not isinstance(action, dict) or not isinstance(action.get('action'), str): raise ValueError('missing action')
-        return action, provider, used_model
-    except Exception:
-        return {"action":"done", "summary":"The model did not return a valid action object. Raw response: " + raw[:800]}, provider, used_model
+    last_provider, last_model = provider_choice, model
+    for attempt in range(max(0, settings.model_action_retries) + 1):
+        if attempt:
+            prompt['correction'] = 'The previous response was not a valid action object. Continue the unfinished task and return exactly one JSON action object; do not explain or claim completion.'
+        raw, last_provider, last_model = await chat([{"role":"system","content":SYSTEM}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
+        try:
+            match = re.search(r'\{.*\}', raw, re.S)
+            action = json.loads(match.group(0) if match else raw)
+            if not isinstance(action, dict) or not isinstance(action.get('action'), str): raise ValueError('missing action')
+            return action, last_provider, last_model
+        except Exception:
+            continue
+    return {"action":"inspect"}, last_provider, last_model
 
 async def _locate(page, target):
     if not target: raise ValueError('Action requires a target')
@@ -170,7 +175,7 @@ async def _fill_form(page):
             errors.append({'field': field.get('label') or field.get('name') or selector, 'error': f'{type(exc).__name__}: {str(exc)[:160]}'})
     return {'fields_detected': len(fields), 'fields_filled': filled, 'fields_skipped': skipped, 'validation_or_interaction_errors': errors, 'synthetic_data': True, 'submitted': False}
 
-async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None):
+async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None):
     async def report(message):
         if progress:
             await progress(message)
@@ -292,9 +297,13 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 else: raise ValueError(f"Unsupported action: {name}")
                 # Never keep values typed into forms in task history.
                 history.append({"action":name,"target":action.get('target'),"result":result})
+                if save_checkpoint:
+                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url})
                 await report(f"Verified action {step}: {name}")
             except Exception as exc:
                 history.append({"action":name,"target":action.get('target'),"error":f"{type(exc).__name__}: {str(exc)[:300]}"})
+                if save_checkpoint:
+                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url, 'error_type': type(exc).__name__})
                 await report(f"Action {step} failed: {type(exc).__name__}")
     return _format_result(f"Stopped after reaching the {settings.max_agent_steps}-step limit. Review the verified actions below and submit a follow-up task to continue.", history, used_providers, used_models)
 
