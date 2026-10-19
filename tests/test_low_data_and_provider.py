@@ -74,3 +74,9 @@ def test_completion_path_persists_verified_checkpoint():
     assert "'action': 'done'" in source
     assert "'verified': True" in source
     assert 'await save_checkpoint' in source
+
+
+def test_task_status_exposes_redacted_checkpoint():
+    from app.models import TaskStatus, now_utc
+    task = TaskStatus(id='task', instruction='Inspect', status='completed', created_at=now_utc(), updated_at=now_utc(), checkpoint='{"action":"done","verified":true}')
+    assert 'verified' in task.checkpoint

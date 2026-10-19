@@ -24,6 +24,7 @@ class TaskStatus(BaseModel):
     updated_at: datetime
     result: str | None = None
     error: str | None = None
+    checkpoint: str | None = None
     provider: str | None = None
     model: str | None = None
     recovery_count: int = 0
