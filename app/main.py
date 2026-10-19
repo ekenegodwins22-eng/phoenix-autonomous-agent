@@ -196,7 +196,9 @@ async def run_task(task_id: str):
                     raise asyncio.CancelledError()
                 task_store.set_state(task_id, 'running', progress=message)
             async def on_waiting_human(details):
-                task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', human_help='Complete the challenge in the browser verification panel, then resume the task.', waiting_details=details)
+                challenge_type = str((details or {}).get('type') or 'human_verification')
+                methods = ', '.join(str(x) for x in ((details or {}).get('resolution_methods') or ['human_completion']))
+                task_store.set_state(task_id, 'waiting_human', progress=f'Paused: detected {challenge_type}.', human_help=f'Complete the detected {challenge_type} in the browser panel, then resume. Available methods: {methods}.', waiting_details=details)
             async def get_user_messages():
                 return task_store.claim_unconsumed_user_messages(task_id)
             async def save_checkpoint(checkpoint):
