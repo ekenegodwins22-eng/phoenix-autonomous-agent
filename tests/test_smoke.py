@@ -352,3 +352,25 @@ def test_phoenix_chat_does_not_retry_authentication_errors(monkeypatch):
     else:
         raise AssertionError('Expected ProviderError')
     assert calls['chat'] == 1
+
+
+def test_synthetic_form_data_classifies_fields_and_respects_constraints():
+    from app.form_data import classify_field, constrained_value, synthetic_profile
+    profile = synthetic_profile()
+    assert classify_field({'type':'email','label':'Work email'}) == 'email'
+    assert classify_field({'type':'number','label':'Age','min':'18','max':'65'}) == 'number'
+    assert classify_field({'type':'text','label':'Unknown custom field'}) is None
+    assert constrained_value({'maxlength':8}, 'first_name', profile) == 'Test'
+    assert constrained_value({'minlength':12,'maxlength':20}, 'username', profile) is not None
+    assert profile['full_name'].startswith(profile['first_name'])
+    assert profile['email'].endswith('@example.test')
+
+
+def test_synthetic_form_data_handles_html_types_and_validation_ranges():
+    from app.form_data import classify_field, constrained_value, synthetic_profile
+    profile = synthetic_profile()
+    assert classify_field({'type':'password','name':'account_password'}) == 'password'
+    assert classify_field({'tag':'select','type':'select-one','label':'Country'}) == 'select'
+    assert classify_field({'tag':'textarea','label':'Description','type':'textarea'}) == 'description'
+    assert constrained_value({'min':'18','max':'21'}, 'number', profile) == '18'
+    assert constrained_value({'min':'2020-01-01','max':'2020-12-31'}, 'date', profile) == '2020-01-01'

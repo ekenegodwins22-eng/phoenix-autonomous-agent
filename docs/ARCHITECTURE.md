@@ -20,3 +20,6 @@
 - Cancellation is persisted and also signals/cancels the active worker so browser cleanup runs through the existing `finally` lifecycle. Retry is explicit and bounded by `MAX_TASK_RECOVERY_ATTEMPTS`.
 - SQLite persistence survives normal process restarts only when `/app/data` is persistent. Render's ephemeral filesystem still requires a persistent disk or external database for durable production history.
 - Each task also has a durable message stream. The session page's bottom composer sends user corrections through `POST /tasks/{id}/messages`; the worker claims unread messages before its next model decision and appends them to the task context. Stop-like messages trigger server-side cancellation, and `resume` can release a human-verification pause. Message content is displayed in the authenticated task session and is not written into generic provider logs.
+
+
+Smart form filling is implemented as a DOM-first runner action. It inspects editable inputs, textareas, and selects for semantic labels, constraints, required state, and options; generates one volatile synthetic profile; fills supported values without submission; and returns field-level outcome metadata. It uses reserved test email domains and does not claim server-side validation or real identity verification.

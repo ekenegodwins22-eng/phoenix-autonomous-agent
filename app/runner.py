@@ -6,6 +6,7 @@ from app.providers import chat
 from app.mailbox import mailbox
 from app.config import settings
 from app.credentials import generate_value
+from app.form_data import synthetic_profile, classify_field, constrained_value
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -33,7 +34,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. When an email address is required, use mailbox_prepare_email(target,variation_type,address_type,gmail_account_id) to reuse or create a supported alias after inspecting accounts and aliases. Use mailbox_fill_verification_code(target,pattern,alias_id) or mailbox_open_verification_link(alias_id) for authorized inbox verification. Keep account passwords, tokens, cookies, OTPs, and verification URLs out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. Do not attempt to bypass CAPTCHA or access controls."""
+SYSTEM = """You are Phoenix Autonomous Agent. Carry out the user's requested browser task using the available action tool. Be decisive and act, rather than only giving instructions. Never claim a step happened unless the tool result confirms it. Work only on the user's stated task. For authorized test-data requests, use fill_form to inspect the DOM and fill supported fields with coherent synthetic values; do not submit consequential forms without user confirmation. Generated test values are not verified identities. If the user authorized random credentials, use generate_credential(name,kind,length,prefix) and then fill_generated(target,name); generated secrets are never shown in action results or summaries. When an email address is required for an authorized real-service workflow, use mailbox_prepare_email(target,variation_type,address_type,gmail_account_id) to reuse or create a supported alias after inspecting accounts and aliases. Use mailbox_fill_verification_code(target,pattern,alias_id) or mailbox_open_verification_link(alias_id) for authorized inbox verification. Keep account passwords, tokens, cookies, OTPs, and verification URLs out of summaries. Prefer semantic locators, then labels/placeholders, then CSS selectors. Each turn must return one JSON object only: {"action":..., ...}. Allowed actions: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id, fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id, attachment_id), done(summary). Use 'target' as a visible label/text/placeholder or a CSS selector prefixed by 'css:'. Do not invent form field values. If a required value is missing, stop and ask for it. Do not attempt to bypass CAPTCHA or access controls."""
 
 
 def valid_url(url):
@@ -79,6 +80,65 @@ async def _browser_retry(operation, attempts=2):
             if attempt + 1 < attempts:
                 await asyncio.sleep(0.25 * (attempt + 1))
     raise last_error
+
+
+async def _inspect_form_fields(page):
+    return await page.locator('input,textarea,select').evaluate_all("""els => els.map((e,i) => {
+        e.setAttribute('data-phoenix-form-field', String(i));
+        const label = e.labels && e.labels[0] ? e.labels[0].innerText : '';
+        return {index:i, tag:e.tagName.toLowerCase(), type:(e.type||'text').toLowerCase(),
+          label:(label||'').trim().slice(0,160), placeholder:e.placeholder||'', name:e.name||'', id:e.id||'',
+          autocomplete:e.autocomplete||'', aria_label:e.getAttribute('aria-label')||'', required:!!e.required,
+          disabled:!!e.disabled, readonly:!!e.readOnly, minlength:e.minLength>0?e.minLength:null,
+          maxlength:e.maxLength>0?e.maxLength:null, min:e.min||null, max:e.max||null, pattern:e.pattern||null,
+          value:e.value||'', checked:!!e.checked, options:e.tagName.toLowerCase()==='select' ? Array.from(e.options).map(o=>({text:(o.textContent||'').trim(),value:o.value,disabled:!!o.disabled})) : []};
+      })""")
+
+
+async def _fill_form(page):
+    profile = synthetic_profile()
+    fields = await _inspect_form_fields(page)
+    filled, skipped, errors = [], [], []
+    radio_groups = set()
+    for field in fields:
+        kind = classify_field(field)
+        selector = f'[data-phoenix-form-field="{field["index"]}"]'
+        loc = page.locator(selector).first
+        try:
+            if not kind:
+                skipped.append({'field': field.get('label') or field.get('name') or field.get('id') or selector, 'reason': 'unsupported-or-noneditable'})
+                continue
+            if kind == 'checkbox':
+                if field.get('required') and not field.get('checked'):
+                    await _browser_retry(loc.check)
+                    filled.append({'field': field.get('label') or field.get('name') or selector, 'kind': kind})
+                else:
+                    skipped.append({'field': field.get('label') or field.get('name') or selector, 'reason': 'optional-checkbox'})
+                continue
+            if kind == 'radio':
+                group = field.get('name') or selector
+                if group in radio_groups or field.get('checked'):
+                    skipped.append({'field': field.get('label') or field.get('name') or selector, 'reason': 'radio-group-already-selected'})
+                else:
+                    await _browser_retry(loc.check); radio_groups.add(group)
+                    filled.append({'field': field.get('label') or field.get('name') or selector, 'kind': kind})
+                continue
+            if kind == 'select':
+                options = [o for o in field.get('options', []) if not o.get('disabled') and o.get('value')]
+                if not options:
+                    skipped.append({'field': field.get('label') or field.get('name') or selector, 'reason': 'no-selectable-options'}); continue
+                value = field.get('value') or options[0]['value']
+                await _browser_retry(lambda: loc.select_option(value))
+                filled.append({'field': field.get('label') or field.get('name') or selector, 'kind': kind, 'value': '[selected-option]'})
+                continue
+            value = constrained_value(field, kind, profile)
+            if value is None:
+                skipped.append({'field': field.get('label') or field.get('name') or selector, 'reason': 'field-requirement-not-understood'}); continue
+            await _browser_retry(lambda value=value: loc.fill(value))
+            filled.append({'field': field.get('label') or field.get('name') or selector, 'kind': kind, 'value': '[synthetic-redacted]'})
+        except Exception as exc:
+            errors.append({'field': field.get('label') or field.get('name') or selector, 'error': f'{type(exc).__name__}: {str(exc)[:160]}'})
+    return {'fields_detected': len(fields), 'fields_filled': filled, 'fields_skipped': skipped, 'validation_or_interaction_errors': errors, 'synthetic_data': True, 'submitted': False}
 
 async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None):
     async def report(message):
@@ -137,6 +197,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(loc.click); result = {"clicked":action.get('target'),"url":page.url}
                 elif name == 'fill':
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.fill(str(action.get('value','')))); result = {"filled":action.get('target'),"value":"[redacted]"}
+                elif name == 'fill_form':
+                    result = await _fill_form(page)
                 elif name == 'generate_credential':
                     credential_name = str(action.get('name','')).strip()
                     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', credential_name): raise ValueError('generate_credential requires a safe name')

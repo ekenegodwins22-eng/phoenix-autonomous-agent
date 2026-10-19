@@ -98,3 +98,7 @@ The dedicated task session page includes a persistent bottom chat composer. Mess
 ## Phoenix chat resilience
 
 Phoenix `/chat` calls retry only transient upstream failures (`502`, `503`, `504`) and network request errors. The default is three total attempts with exponential delays of `0.5s`, `1s`, and a configurable maximum of `8s`; authentication, validation, model-selection, and other permanent HTTP errors are not retried. Configure `PRIMARY_CHAT_RETRY_ATTEMPTS`, `PRIMARY_CHAT_RETRY_BASE_SECONDS`, and `PRIMARY_CHAT_RETRY_MAX_SECONDS` as needed.
+
+## Smart form filling
+
+For authorized local, staging, or test-form work, the agent supports a `fill_form` action. It inspects the live DOM instead of requiring a screenshot, using labels, placeholders, names, IDs, autocomplete hints, input types, required flags, length/range/pattern metadata, and select options. It generates one coherent synthetic profile per action, fills supported fields, re-inspects naturally when the next model turn sees the changed DOM, and returns detected, filled, skipped, and interaction-error lists. Values use reserved synthetic email domains such as `example.test`; the action never submits the form and never claims server-side validation or identity verification.
