@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import re
 import secrets
-import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from app.config import settings
+from app.db import connect, using_postgres
 
 
 def _now() -> str:
@@ -16,13 +16,9 @@ def _now() -> str:
 
 
 def _connect():
-    path = Path(settings.database_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.executescript("""
+    conn = connect()
+    task_log_id = 'BIGSERIAL PRIMARY KEY' if using_postgres() else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    schema = """
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, owner_id INTEGER NOT NULL,
       instruction TEXT NOT NULL, start_url TEXT, timeout_seconds INTEGER,
@@ -34,20 +30,21 @@ def _connect():
     CREATE INDEX IF NOT EXISTS idx_tasks_owner_updated ON tasks(owner_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at);
     CREATE TABLE IF NOT EXISTS task_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+      id __TASK_LOG_ID__, task_id TEXT NOT NULL,
       created_at TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL,
       FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id, id);
     CREATE TABLE IF NOT EXISTS task_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+      id __TASK_MESSAGE_ID__, task_id TEXT NOT NULL,
       owner_id INTEGER NOT NULL, created_at TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('user','agent','system')),
       content TEXT NOT NULL, consumed_at TEXT,
       FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, id);
-    """)
+    """.replace('__TASK_LOG_ID__', task_log_id).replace('__TASK_MESSAGE_ID__', task_log_id)
+    conn.executescript(schema)
     return conn
 
 

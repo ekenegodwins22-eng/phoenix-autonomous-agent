@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 45
     auth_secret: str = "change-me-before-deploying"
     auth_token_hours: int = 168
+    database_url: str | None = None
     database_path: str = "./data/phoenix.db"
     host: str = "0.0.0.0"
     port: int = 8000

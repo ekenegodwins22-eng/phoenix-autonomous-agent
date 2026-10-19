@@ -1,9 +1,9 @@
 import base64, hashlib, hmac, json, os, sqlite3, time
-from pathlib import Path
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from app.config import settings
+from app.db import connect, using_postgres
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -18,12 +18,8 @@ class UserView(BaseModel):
 
 
 def _connect():
-    path = Path(settings.database_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)")
+    conn = connect()
+    conn.execute("CREATE TABLE IF NOT EXISTS users (id %s PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)" % ('BIGSERIAL' if using_postgres() else 'INTEGER'))
     return conn
 
 
@@ -75,8 +71,10 @@ def register_user(email: str, password: str):
         conn.commit()
         row = conn.execute("SELECT id,email,created_at FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
         return dict(row)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    except Exception as exc:
+        if isinstance(exc, sqlite3.IntegrityError) or exc.__class__.__name__ == 'UniqueViolation':
+            raise HTTPException(status_code=409, detail="An account with this email already exists")
+        raise
     finally:
         conn.close()
 
