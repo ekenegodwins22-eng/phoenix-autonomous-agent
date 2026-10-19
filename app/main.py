@@ -390,4 +390,4 @@ async def get_task(task_ref: str, user=Depends(current_user)):
 
 @app.get('/tasks/{task_ref}/session', include_in_schema=False)
 async def task_session(task_ref: str):
-    return FileResponse(Path(__file__).parent / 'static' / 'task.html', headers={'Cache-Control': 'no-cache'})
+    return FileResponse(Path(__file__).parent / 'static' / 'task.html', headers={'Cache-Control': 'private, no-store, max-age=0, must-revalidate', 'Pragma': 'no-cache'})

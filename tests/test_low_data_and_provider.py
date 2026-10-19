@@ -66,7 +66,7 @@ def test_health_and_static_shell_are_compressed_or_private_cached():
     assert root.headers.get('cache-control') == 'no-cache'
     task_shell = client.get('/tasks/example/session')
     assert task_shell.status_code == 200
-    assert task_shell.headers.get('cache-control') == 'no-cache'
+    assert 'no-store' in task_shell.headers.get('cache-control', '')
 
 
 def test_completion_path_persists_verified_checkpoint():
