@@ -25,9 +25,10 @@ def _primary_url(path: str) -> str:
         raise ProviderError("PRIMARY_BASE_URL is not configured")
     return f"{base}/{path.lstrip('/')}"
 
-def _raise_upstream(response: httpx.Response, operation: str) -> None:
+def _raise_upstream(response: httpx.Response, operation: str, model: str | None = None) -> None:
     if response.is_error:
-        raise ProviderError(f"Phoenix AI {operation} failed with HTTP {response.status_code}")
+        suffix = f" for model {model}" if model else ""
+        raise ProviderError(f"Phoenix AI {operation} failed with HTTP {response.status_code}{suffix}")
 
 def _extract_model_ids(data) -> list[str]:
     found, seen = [], set()
@@ -108,7 +109,7 @@ async def primary_chat(messages, model=None) -> str:
             delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
             log.warning("Phoenix AI /chat returned HTTP %s; retrying in %.2fs (%d/%d)", response.status_code, delay, attempt + 1, attempts - 1)
             await asyncio.sleep(delay)
-        _raise_upstream(response, "/chat")
+        _raise_upstream(response, "/chat", chosen_model)
         return _extract_chat_text(response.json())
     except ProviderError: raise
     except (httpx.HTTPError, ValueError) as exc:
@@ -132,7 +133,7 @@ async def primary_chat_stream(messages, model=None) -> AsyncIterator[str]:
     try:
         async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
             async with client.stream("POST", _primary_url("chat/stream"), headers=_primary_headers(), json={"model": chosen_model, "message": _prompt(messages)}) as response:
-                _raise_upstream(response, "/chat/stream")
+                _raise_upstream(response, "/chat/stream", chosen_model)
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or line.startswith(":"): continue

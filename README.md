@@ -9,7 +9,7 @@ Use **Render Web Service with the included Dockerfile and `render.yaml`** for th
 ## Required environment variables
 
 - `PRIMARY_BASE_URL`: Phoenix AI Router base URL (no `/v1`). Defaults to `https://concerned-swordfish-suhailtechlnfo-01fd2de0.koyeb.app`.
-- `PRIMARY_MODEL`: optional default model ID. The app fetches live model IDs from `GET /available-models`; chat requests use `POST /chat` with `{ "model": "...", "message": "..." }` and the `X-API-Key` header.
+- `PRIMARY_MODEL`: optional default model ID, defaulting to the verified `deepseek-v4-flash` router model. The app fetches live model IDs from `GET /available-models`; chat requests use `POST /chat` with `{ "model": "...", "message": "..." }` and the `X-API-Key` header.
 - `GEMINI_MODELS`: comma-separated Gemini model IDs shown in the model picker (defaults to `gemini-2.5-flash,gemini-2.5-pro`).
 - `PRIMARY_API_KEY`: required for the protected Phoenix model and chat routes; sent only server-side as `X-API-Key`.
 - `AUTH_SECRET`: long random secret for signing access tokens; change it before deployment.
@@ -92,7 +92,7 @@ Use `GET /tasks/{id}` or `GET /tasks/{slug}` to reconnect, `GET /tasks/{id}/logs
 
 The Render blueprint points `DATABASE_PATH` to `/app/data/phoenix.db`. A persistent Render disk or external database is required for task and account survival across redeploys or ephemeral filesystem loss. The single web service provides the worker; task execution does not depend on the frontend connection remaining open.
 
-The dedicated task session page includes a persistent bottom chat composer. Messages are stored in SQLite through `GET /tasks/{id}/messages` and `POST /tasks/{id}/messages`. User corrections are injected into the agent's next decision turn; sending `stop`, `cancel`, or `abort` requests server-side cancellation, while `resume` continues a task paused for human verification. Refreshing or closing the page does not lose the task conversation.
+The dedicated task session page includes a persistent bottom chat composer. Messages are stored in SQLite through `GET /tasks/{id}/messages` and `POST /tasks/{id}/messages`. User corrections are injected into the agent's next decision turn; sending `stop`, `cancel`, or `abort` requests server-side cancellation, while `resume` continues a task paused for human verification. Refreshing or closing the page does not lose the task conversation. The session UI uses one adaptive status loop, pauses nonessential synchronization while hidden or offline, and exposes a selectable low-data mode that uses slower updates and stops polling after terminal task states.
 
 
 ## Phoenix chat resilience

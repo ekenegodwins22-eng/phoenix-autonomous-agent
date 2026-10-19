@@ -1,5 +1,6 @@
 import asyncio, logging
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from pathlib import Path
 from pydantic import BaseModel, EmailStr
@@ -16,6 +17,7 @@ from app.agent.prompt_loader import InstructionConfigError, instruction_status
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 execution_lock = asyncio.Lock()
 task_resume_events = {}
 task_cancel_events = {}
@@ -38,7 +40,7 @@ async def recover_tasks_on_startup():
 
 @app.get("/", include_in_schema=False)
 async def root():
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    return FileResponse(Path(__file__).parent / "static" / "index.html", headers={'Cache-Control': 'no-cache'})
 
 @app.get("/health")
 async def health():
@@ -367,4 +369,4 @@ async def get_task(task_ref: str, user=Depends(current_user)):
 
 @app.get('/tasks/{task_ref}/session', include_in_schema=False)
 async def task_session(task_ref: str):
-    return FileResponse(Path(__file__).parent / 'static' / 'task.html')
+    return FileResponse(Path(__file__).parent / 'static' / 'task.html', headers={'Cache-Control': 'no-cache'})

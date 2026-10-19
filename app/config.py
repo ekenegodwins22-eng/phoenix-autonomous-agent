@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     app_url: str = "http://127.0.0.1:8000"
     primary_base_url: str = "https://concerned-swordfish-suhailtechlnfo-01fd2de0.koyeb.app"
     primary_api_key: str = ""
-    primary_model: str = ""
+    primary_model: str = "deepseek-v4-flash"
     primary_timeout_seconds: float = 60
     primary_chat_retry_attempts: int = 3
     primary_chat_retry_base_seconds: float = 0.5
