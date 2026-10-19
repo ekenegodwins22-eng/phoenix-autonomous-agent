@@ -192,7 +192,7 @@ def requeue_for_message(task_id: str) -> dict | None:
 def is_cancel_requested(task_id: str) -> bool:
     with _connect() as conn:
         row = conn.execute('SELECT cancel_requested FROM tasks WHERE id=?', (task_id,)).fetchone()
-    return bool(row and row[0])
+    return bool(row and row['cancel_requested'])
 
 
 def release_worker(task_id: str):
