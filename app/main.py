@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, Response
 from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from app.config import settings
-from app.models import TaskRequest, TaskStatus, now_utc
+from app.models import TaskRequest, TaskStatus, TaskMessage, TaskMessageRequest, now_utc
 from app.runner import HumanInterventionRequired, execute_task
 from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
@@ -194,8 +194,10 @@ async def run_task(task_id: str):
                 task_store.set_state(task_id, 'running', progress=message)
             async def on_waiting_human(details):
                 task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', human_help='Complete the challenge in the browser verification panel, then resume the task.', waiting_details=details)
+            async def get_user_messages():
+                return task_store.claim_unconsumed_user_messages(task_id)
             request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'))
-            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event), timeout=request.timeout_seconds or settings.task_timeout_seconds)
+            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages), timeout=request.timeout_seconds or settings.task_timeout_seconds)
             task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
         except asyncio.CancelledError:
             task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
@@ -215,6 +217,31 @@ def _task_for_user(task_ref: str, user):
     if not item:
         raise HTTPException(status_code=404, detail='Task not found')
     return item
+
+
+@app.get('/tasks/{task_ref}/messages', response_model=list[TaskMessage])
+async def task_messages(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    return task_store.get_messages(item['id'], owner_id=user['id'], limit=200)
+
+
+@app.post('/tasks/{task_ref}/messages', response_model=TaskMessage, status_code=202)
+async def send_task_message(task_ref: str, payload: TaskMessageRequest, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    content = payload.content.strip()
+    message = task_store.add_message(item['id'], user['id'], 'user', content)
+    normalized = content.lower().strip(' .!')
+    if normalized in {'stop', 'cancel', 'abort', 'terminate', 'stop task', 'cancel task'}:
+        if item['status'] not in {'completed', 'failed', 'cancelled'}:
+            task_store.request_cancel(item['id'])
+            event = task_cancel_events.get(item['id'])
+            if event: event.set()
+            handle = task_handles.get(item['id'])
+            if handle and not handle.done(): handle.cancel()
+    elif normalized in {'resume', 'continue', 'continue task'} and item['status'] == 'waiting_human':
+        event = task_resume_events.get(item['id'])
+        if event: event.set()
+    return message
 
 
 @app.get('/tasks/{task_ref}/logs')

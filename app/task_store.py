@@ -39,6 +39,14 @@ def _connect():
       FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id, id);
+    CREATE TABLE IF NOT EXISTS task_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
+      owner_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user','agent','system')),
+      content TEXT NOT NULL, consumed_at TEXT,
+      FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, id);
     """)
     return conn
 
@@ -89,6 +97,36 @@ def get_logs(task_id: str, owner_id: int | None = None, limit: int = 200) -> lis
             return []
         rows = conn.execute('SELECT created_at,level,message FROM task_logs WHERE task_id=? ORDER BY id DESC LIMIT ?', (task_id,limit)).fetchall()
     return [dict(row) for row in reversed(rows)]
+
+
+def add_message(task_id: str, owner_id: int, role: str, content: str) -> dict:
+    content = str(content).strip()[:8000]
+    if not content:
+        raise ValueError('Message cannot be empty')
+    now = _now()
+    with _connect() as conn:
+        cur = conn.execute('INSERT INTO task_messages (task_id,owner_id,created_at,role,content) VALUES (?,?,?,?,?)', (task_id,owner_id,now,role,content))
+        conn.commit()
+        message_id = cur.lastrowid
+    return {'id': message_id, 'task_id': task_id, 'created_at': now, 'role': role, 'content': content}
+
+
+def get_messages(task_id: str, owner_id: int | None = None, limit: int = 200) -> list[dict]:
+    with _connect() as conn:
+        if owner_id is not None and not conn.execute('SELECT 1 FROM tasks WHERE id=? AND owner_id=?', (task_id,owner_id)).fetchone():
+            return []
+        rows = conn.execute('SELECT id,task_id,created_at,role,content FROM task_messages WHERE task_id=? ORDER BY id DESC LIMIT ?', (task_id,limit)).fetchall()
+    return [dict(row) for row in reversed(rows)]
+
+
+def claim_unconsumed_user_messages(task_id: str) -> list[dict]:
+    now = _now()
+    with _connect() as conn:
+        rows = conn.execute("SELECT id,task_id,created_at,role,content FROM task_messages WHERE task_id=? AND role='user' AND consumed_at IS NULL ORDER BY id", (task_id,)).fetchall()
+        if rows:
+            conn.execute("UPDATE task_messages SET consumed_at=? WHERE task_id=? AND role='user' AND consumed_at IS NULL", (now,task_id))
+            conn.commit()
+    return [dict(row) for row in rows]
 
 
 def _update(task_id: str, **fields):

@@ -96,6 +96,18 @@ def test_task_cancellation_is_server_side_and_restart_does_not_replay(monkeypatc
     assert 'not replayed' in task_store.get_task(active['id'])['error']
 
 
+def test_task_chat_messages_persist_and_are_claimed_once(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'messages.db'))
+    task = task_store.create_task(owner_id=3, instruction='Inspect', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    sent = task_store.add_message(task['id'], 3, 'user', 'Use the other button instead')
+    assert sent['role'] == 'user'
+    assert task_store.get_messages(task['id'], owner_id=3)[0]['content'] == 'Use the other button instead'
+    claimed = task_store.claim_unconsumed_user_messages(task['id'])
+    assert [message['id'] for message in claimed] == [sent['id']]
+    assert task_store.claim_unconsumed_user_messages(task['id']) == []
+
+
 def test_registration_has_no_verification(monkeypatch, tmp_path):
     from app import config, auth
     monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'users.db'))

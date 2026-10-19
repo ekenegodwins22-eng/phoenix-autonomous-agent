@@ -92,6 +92,8 @@ Use `GET /tasks/{id}` or `GET /tasks/{slug}` to reconnect, `GET /tasks/{id}/logs
 
 The Render blueprint points `DATABASE_PATH` to `/app/data/phoenix.db`. A persistent Render disk or external database is required for task and account survival across redeploys or ephemeral filesystem loss. The single web service provides the worker; task execution does not depend on the frontend connection remaining open.
 
+The dedicated task session page includes a persistent bottom chat composer. Messages are stored in SQLite through `GET /tasks/{id}/messages` and `POST /tasks/{id}/messages`. User corrections are injected into the agent's next decision turn; sending `stop`, `cancel`, or `abort` requests server-side cancellation, while `resume` continues a task paused for human verification. Refreshing or closing the page does not lose the task conversation.
+
 
 ## Phoenix chat resilience
 

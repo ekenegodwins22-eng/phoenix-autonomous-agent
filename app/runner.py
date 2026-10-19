@@ -80,7 +80,7 @@ async def _browser_retry(operation, attempts=2):
                 await asyncio.sleep(0.25 * (attempt + 1))
     raise last_error
 
-async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None):
+async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None):
     async def report(message):
         if progress:
             await progress(message)
@@ -103,6 +103,10 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
         for step in range(1, settings.max_agent_steps + 1):
             if cancel_event and cancel_event.is_set():
                 raise asyncio.CancelledError()
+            if get_user_messages:
+                for message in await get_user_messages():
+                    history.append({"tool": "user_message", "message": message.get("content", "")})
+                    await report("Received a new user instruction from the task chat")
             await report(f"Choosing action {step}/{settings.max_agent_steps}")
             state = await _snapshot(page) if page.url else {"url":"", "title":"", "body":"No page open yet. Use goto with an explicit URL from the task, or ask user for target URL.", "controls":[]}
             while state.get("challenge"):

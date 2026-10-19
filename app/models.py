@@ -30,3 +30,13 @@ class TaskStatus(BaseModel):
     cancel_requested: bool = False
     session_url: str | None = None
     logs: list[dict] = Field(default_factory=list)
+
+class TaskMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=8000)
+
+class TaskMessage(BaseModel):
+    id: int
+    task_id: str
+    created_at: datetime
+    role: Literal['user', 'agent', 'system']
+    content: str
