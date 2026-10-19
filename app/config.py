@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     browser_action_timeout_ms: int = 10000
     browser_retry_attempts: int = 3
     browser_close_timeout_seconds: float = 8
+    browser_stream_interval_seconds: float = 0.75
+    browser_stream_jpeg_quality: int = 60
     mailbox_api_base_url: str = "https://gmail-alias-api.senseiphoenix.name.ng"
     mailbox_api_token: str = ""
     mailbox_api_cookie: str = ""

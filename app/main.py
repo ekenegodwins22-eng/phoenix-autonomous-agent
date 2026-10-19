@@ -1,7 +1,7 @@
 import asyncio, logging
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from app.config import settings
@@ -324,6 +324,27 @@ async def task_screenshot(task_ref: str, user=Depends(current_user)):
         return Response(content=image, media_type='image/png', headers={'Cache-Control':'no-store'})
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f'Could not capture browser screenshot: {type(exc).__name__}')
+
+
+@app.get('/tasks/{task_ref}/browser-stream')
+async def task_browser_stream(task_ref: str, user=Depends(current_user)):
+    item, page = _waiting_browser(task_ref, user)
+    boundary = b'phoenixframe'
+
+    async def frames():
+        while browser.current_page is page and browser.current_task_id == item['id']:
+            current = task_store.get_task(item['id'])
+            if not current or current.get('status') != 'waiting_human':
+                break
+            try:
+                image = await page.screenshot(type='jpeg', quality=settings.browser_stream_jpeg_quality)
+            except Exception:
+                break
+            yield b'--' + boundary + b'\r\nContent-Type: image/jpeg\r\nContent-Length: ' + str(len(image)).encode() + b'\r\n\r\n' + image + b'\r\n'
+            await asyncio.sleep(max(0.25, settings.browser_stream_interval_seconds))
+        yield b'--' + boundary + b'--\r\n'
+
+    return StreamingResponse(frames(), media_type='multipart/x-mixed-replace; boundary=phoenixframe', headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @app.post('/tasks/{task_ref}/browser-action')
