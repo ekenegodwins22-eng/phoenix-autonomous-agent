@@ -57,6 +57,14 @@ services:
         value: "2"
       - key: BROWSER_RETRY_ATTEMPTS
         value: "3"
+      - key: BROWSER_PROXY_SERVER
+        sync: false
+      - key: BROWSER_PROXY_USERNAME
+        sync: false
+      - key: BROWSER_PROXY_PASSWORD
+        sync: false
+      - key: BROWSER_PROXY_REQUIRED
+        value: "false"
 
 databases:
   - name: phoenix-db

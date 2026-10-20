@@ -102,3 +102,11 @@ Phoenix `/chat` calls retry only transient upstream failures (`502`, `503`, `504
 ## Smart form filling
 
 For authorized local, staging, or test-form work, the agent supports a `fill_form` action. It inspects the live DOM instead of requiring a screenshot, using labels, placeholders, names, IDs, autocomplete hints, input types, required flags, length/range/pattern metadata, and select options. It generates one coherent synthetic profile per action, fills supported fields, re-inspects naturally when the next model turn sees the changed DOM, and returns detected, filled, skipped, and interaction-error lists. Values use reserved synthetic email domains such as `example.test`; the action never submits the form and never claims server-side validation or identity verification.
+
+## Adaptive registration and configured proxy mode
+
+Registration actions persist redacted observations such as form displayed, email verification required, CAPTCHA/human verification required, phone or identity verification required, rejected, succeeded, or unknown. Phoenix does not report success merely because a submit action returned. Task checkpoints retain the observed URL, title, and short evidence excerpt without credentials or verification tokens.
+
+Tasks accept `proxy_mode` (`direct` or `configured`). Configured mode uses the protected `BROWSER_PROXY_SERVER`, `BROWSER_PROXY_USERNAME`, and `BROWSER_PROXY_PASSWORD` settings with Playwright HTTP/HTTPS/SOCKS5 support. Proxy credentials are never persisted or sent to the model; checkpoints contain only a sanitized proxy identifier. A configured proxy request fails safely when no protected proxy is available and never silently falls back to direct connection. `GET /proxy/status` exposes only non-secret configuration metadata.
+
+Render remains the production deployment. Railway Sandbox is an optional overflow development workspace only: reconnect to the one existing sandbox when the active development environment is resource-constrained, keep source and checkpoints in GitHub, and do not create or destroy additional sandboxes automatically.

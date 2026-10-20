@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     browser_close_timeout_seconds: float = 8
     browser_stream_interval_seconds: float = 0.75
     browser_stream_jpeg_quality: int = 60
+    browser_proxy_server: str | None = None
+    browser_proxy_username: str | None = None
+    browser_proxy_password: str | None = None
+    browser_proxy_required: bool = False
     mailbox_api_base_url: str = "https://gmail-alias-api.senseiphoenix.name.ng"
     mailbox_api_token: str = ""
     mailbox_api_cookie: str = ""

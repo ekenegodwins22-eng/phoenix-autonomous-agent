@@ -16,7 +16,7 @@ class SingleBrowser:
         self.current_task_id = None
 
     @asynccontextmanager
-    async def session(self):
+    async def session(self, proxy: dict | None = None):
         async with self.lock:
             pw = browser = context = page = None
             try:
@@ -25,12 +25,14 @@ class SingleBrowser:
                 if not installation.get('available'):
                     raise RuntimeError(f"Playwright Chromium unavailable: {installation.get('error', 'unknown installation error')}")
                 pw = await async_playwright().start()
-                browser = await pw.chromium.launch(headless=settings.browser_headless, args=[
+                launch_options = {'headless': settings.browser_headless, 'args': [
                     "--disable-dev-shm-usage", "--disable-background-networking",
                     "--disable-extensions", "--disable-sync", "--no-first-run",
                     "--no-default-browser-check", "--disable-gpu",
-                    "--disable-background-timer-throttling", "--disable-renderer-backgrounding"
-                ])
+                    "--disable-background-timer-throttling", "--disable-renderer-backgrounding"]}
+                if proxy:
+                    launch_options['proxy'] = {key: value for key, value in proxy.items() if key in {'server', 'username', 'password'} and value}
+                browser = await pw.chromium.launch(**launch_options)
                 context = await browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=True)
                 page = await context.new_page()
                 self.current_page = page

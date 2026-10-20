@@ -14,6 +14,7 @@ from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
 from app.agent.task_manager import task_manager as task_store
 from app.agent.prompt_loader import InstructionConfigError, instruction_status
+from app.proxy import configured_proxy, public_status
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
@@ -51,7 +52,13 @@ async def health():
 async def runtime_status(user=Depends(current_user)):
     installation = await asyncio.to_thread(browser_installation_status)
     resources = await asyncio.to_thread(resource_status)
-    return {"agent_instructions": instruction_status(), "browser": installation, "resources": resources}
+    return {"agent_instructions": instruction_status(), "browser": installation, "resources": resources, "proxy": public_status()}
+
+
+@app.get('/proxy/status')
+async def proxy_status(user=Depends(current_user)):
+    """Return only non-secret proxy configuration metadata."""
+    return public_status()
 
 @app.post('/auth/register', status_code=201)
 async def register(payload: AuthPayload):
@@ -159,7 +166,12 @@ async def models(user=Depends(current_user)):
 
 @app.post("/tasks", response_model=TaskStatus, status_code=202)
 async def create_task(request: TaskRequest, user=Depends(current_user)):
-    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model)
+    proxy = configured_proxy() if request.proxy_mode == 'configured' else None
+    if request.proxy_mode == 'configured' and not proxy:
+        raise HTTPException(status_code=422, detail='Configured proxy mode requested but no protected proxy is configured')
+    if request.proxy_mode == 'direct' and settings.browser_proxy_required:
+        raise HTTPException(status_code=422, detail='A proxy is required by server configuration for this deployment')
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None)
     asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
@@ -203,8 +215,8 @@ async def run_task(task_id: str):
                 return task_store.claim_unconsumed_user_messages(task_id)
             async def save_checkpoint(checkpoint):
                 task_store.save_checkpoint(task_id, checkpoint)
-            request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'))
-            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint), timeout=request.timeout_seconds or settings.task_timeout_seconds)
+            request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct')
+            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode), timeout=request.timeout_seconds or settings.task_timeout_seconds)
             task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
         except asyncio.CancelledError:
             task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')

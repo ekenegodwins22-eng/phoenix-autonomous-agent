@@ -25,7 +25,8 @@ def _connect():
       status TEXT NOT NULL, progress TEXT, human_help TEXT, waiting_details TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT, error TEXT,
       provider TEXT, model TEXT, recovery_count INTEGER NOT NULL DEFAULT 0,
-      cancel_requested INTEGER NOT NULL DEFAULT 0, worker_token TEXT, checkpoint TEXT
+      cancel_requested INTEGER NOT NULL DEFAULT 0, worker_token TEXT, checkpoint TEXT,
+      proxy_mode TEXT NOT NULL DEFAULT 'direct', proxy_identifier TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_owner_updated ON tasks(owner_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at);
@@ -45,6 +46,11 @@ def _connect():
     CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, id);
     """.replace('__TASK_LOG_ID__', task_log_id).replace('__TASK_MESSAGE_ID__', task_log_id)
     conn.executescript(schema)
+    for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT")):
+        try:
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+        except Exception:
+            pass
     return conn
 
 
@@ -62,12 +68,12 @@ def _slug(instruction: str, task_id: str) -> str:
     return f'{words}-{task_id[:6]}'
 
 
-def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None) -> dict:
+def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None) -> dict:
     task_id = secrets.token_hex(8)
     slug = _slug(instruction, task_id)
     now = _now()
     with _connect() as conn:
-        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model))
+        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier))
         conn.execute("INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)", (task_id,now,'info','Task accepted and queued.'))
         conn.commit()
     return get_task(task_id)

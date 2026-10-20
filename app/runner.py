@@ -8,6 +8,7 @@ from app.config import settings
 from app.credentials import generate_value
 from app.form_data import synthetic_profile, classify_field, constrained_value
 from app.agent.prompt_loader import InstructionConfigError, build_effective_instructions
+from app.proxy import configured_proxy
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -126,6 +127,31 @@ def _registration_needs_mailbox_email(instruction: str, state: dict) -> bool:
     )
 
 
+def _registration_observation(instruction: str, state: dict) -> dict | None:
+    """Classify the observed post-action registration state; never claims success from a click alone."""
+    text = f"{state.get('title', '')} {state.get('body', '')} {' '.join(str(x) for x in state.get('controls', []))}".lower()
+    intent = str(instruction or '').lower()
+    if not any(word in intent for word in ('register', 'registration', 'sign up', 'signup', 'create account', 'create an account')):
+        return None
+    if any(x in text for x in ('identity verification', 'verify your identity', 'government id')):
+        outcome = 'identity_verification_required'
+    elif any(x in text for x in ('phone verification', 'verify your phone', 'sms code', 'phone number verification')):
+        outcome = 'phone_verification_required'
+    elif state.get('challenge'):
+        outcome = 'captcha_or_human_verification_required'
+    elif any(x in text for x in ('verify your email', 'email verification', 'check your inbox', 'verification link', 'confirmation email')):
+        outcome = 'email_verification_required'
+    elif any(x in text for x in ('registration rejected', 'unable to create', 'already registered', 'invalid registration', 'sign up failed')):
+        outcome = 'registration_rejected'
+    elif any(x in text for x in ('account created', 'welcome', 'registration successful', 'successfully registered', 'dashboard')):
+        outcome = 'registration_succeeded'
+    elif any(str(c.get('type', '')).lower() in {'email', 'password'} for c in state.get('controls', [])):
+        outcome = 'registration_form_displayed'
+    else:
+        outcome = 'registration_outcome_unknown'
+    return {'state': outcome, 'url': state.get('url'), 'title': state.get('title'), 'evidence_excerpt': str(state.get('body', ''))[:500]}
+
+
 async def _prepare_mailbox_email(page, state: dict, mailbox_context: dict):
     prepared = await mailbox.prepare_address(variation_type='dots', address_type='alias')
     target = next((control for control in state.get('controls', []) if str(control.get('type', '')).lower() == 'email' or str(control.get('autocomplete', '')).lower() == 'email' or 'email' in f"{control.get('name', '')} {control.get('id', '')} {control.get('label', '')} {control.get('placeholder', '')}".lower()), None)
@@ -187,7 +213,7 @@ async def _fill_form(page):
             errors.append({'field': field.get('label') or field.get('name') or selector, 'error': f'{type(exc).__name__}: {str(exc)[:160]}'})
     return {'fields_detected': len(fields), 'fields_filled': filled, 'fields_skipped': skipped, 'validation_or_interaction_errors': errors, 'synthetic_data': True, 'submitted': False}
 
-async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None):
+async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None, proxy_mode: str = 'direct'):
     async def report(message):
         if progress:
             await progress(message)
@@ -203,7 +229,12 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     generated_credentials = {}
     mailbox_context = {}
     mailbox_email_attempted = False
-    async with browser.session() as page:
+    proxy = configured_proxy() if proxy_mode == 'configured' else None
+    if proxy_mode == 'configured' and not proxy:
+        raise TaskBlocked('Configured proxy requested but no protected proxy is available.')
+    if proxy_mode == 'direct' and settings.browser_proxy_required:
+        raise TaskBlocked('Direct connection is disabled because this deployment requires a proxy.')
+    async with browser.session(proxy=proxy) as page:
         browser.current_task_id = task_id
         if url:
             await report(f"Opening {url}")
@@ -308,13 +339,18 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     evidence = await _snapshot(page) if page.url else {'url': '', 'title': '', 'body': ''}
                     history.append({"action":"done","result":summary,"evidence":{"url":evidence.get('url'),"title":evidence.get('title'),"body_excerpt":evidence.get('body','')[:500]}})
                     if save_checkpoint:
-                        await save_checkpoint({'step': step, 'action': 'done', 'url': evidence.get('url'), 'title': evidence.get('title'), 'verified': True})
+                        await save_checkpoint({'step': step, 'action': 'done', 'url': evidence.get('url'), 'title': evidence.get('title'), 'verified': True, 'proxy_mode': proxy_mode, 'proxy_identifier': proxy.get('identifier') if proxy else None})
                     return _format_result(summary, history, used_providers, used_models)
                 else: raise ValueError(f"Unsupported action: {name}")
+                registration = None
+                if name in {'click', 'press', 'fill_form', 'select', 'mailbox_prepare_email', 'mailbox_fill_verification_code', 'mailbox_open_verification_link'}:
+                    registration = _registration_observation(instruction, await _snapshot(page))
+                    if registration:
+                        result = {**(result if isinstance(result, dict) else {'result': result}), 'registration': registration}
                 # Never keep values typed into forms in task history.
                 history.append({"action":name,"target":action.get('target'),"result":result})
                 if save_checkpoint:
-                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url})
+                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url, 'proxy_mode': proxy_mode, 'proxy_identifier': proxy.get('identifier') if proxy else None, 'registration': registration})
                 await report(f"Verified action {step}: {name}")
             except Exception as exc:
                 history.append({"action":name,"target":action.get('target'),"error":f"{type(exc).__name__}: {str(exc)[:300]}"})
