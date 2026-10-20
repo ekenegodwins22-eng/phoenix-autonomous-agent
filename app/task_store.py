@@ -170,6 +170,15 @@ def claim_task(task_id: str, worker_token: str) -> bool:
         return cur.rowcount == 1
 
 
+def next_queued_task() -> str | None:
+    """Return one queued task; the worker immediately performs the atomic claim."""
+    with _connect() as conn:
+        row = conn.execute("SELECT id FROM tasks WHERE status='queued' AND worker_token IS NULL ORDER BY created_at LIMIT 1").fetchone()
+    if not row:
+        return None
+    return row['id']
+
+
 def request_cancel(task_id: str) -> bool:
     with _connect() as conn:
         now = _now()

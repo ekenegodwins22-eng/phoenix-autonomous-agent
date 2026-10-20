@@ -110,3 +110,15 @@ Registration actions persist redacted observations such as form displayed, email
 Tasks accept `proxy_mode` (`direct` or `configured`). Configured mode uses the protected `BROWSER_PROXY_SERVER`, `BROWSER_PROXY_USERNAME`, and `BROWSER_PROXY_PASSWORD` settings with Playwright HTTP/HTTPS/SOCKS5 support. Proxy credentials are never persisted or sent to the model; checkpoints contain only a sanitized proxy identifier. A configured proxy request fails safely when no protected proxy is available and never silently falls back to direct connection. `GET /proxy/status` exposes only non-secret configuration metadata.
 
 Render remains the production deployment. Railway Sandbox is an optional overflow development workspace only: reconnect to the one existing sandbox when the active development environment is resource-constrained, keep source and checkpoints in GitHub, and do not create or destroy additional sandboxes automatically.
+
+## Phoenix overflow workspace worker
+
+Phoenix production remains the Render web service. When the Phoenix queue grows beyond the primary worker's available capacity, an additional Phoenix worker can be run in an auxiliary workspace using the same protected `DATABASE_URL`, provider, mailbox, and authentication configuration:
+
+```bash
+PHOENIX_WORKER_ID=overflow-1 python -m app.overflow_worker
+```
+
+The worker polls the shared Phoenix task queue, lets the database claim transaction prevent duplicate work, runs each claimed task with its own Playwright browser session, and writes progress, checkpoints, logs, and results back to Phoenix PostgreSQL. The workspace is not a second production deployment and does not require pushing runtime checkpoints to GitHub. A human-verification task remains attached to the worker process that owns its browser session; its persisted state is still visible through the same Render UI.
+
+The Railway CLI is optional for opening such a workspace. Phoenix does not create or destroy Railway workspaces from the Render web process, and it never silently moves an active browser session between workers.

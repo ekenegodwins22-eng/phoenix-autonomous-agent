@@ -188,7 +188,7 @@ async def start_task(task_id: str):
 
 
 async def run_task(task_id: str):
-    worker_token = f'worker-{id(asyncio.current_task())}'
+    worker_token = f'{settings.phoenix_worker_id}:{id(asyncio.current_task())}'
     if not task_store.claim_task(task_id, worker_token):
         return
     item = task_store.get_task(task_id)

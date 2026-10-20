@@ -52,5 +52,8 @@ class Settings(BaseSettings):
     resource_disk_path: str = "/"
     minimum_free_disk_bytes: int = 268435456
     maximum_memory_used_percent: float = 92
+    phoenix_worker_id: str = "primary-web"
+    phoenix_worker_poll_seconds: float = 2.0
+    phoenix_worker_idle_exit_seconds: int = 0
 
 settings = Settings()
