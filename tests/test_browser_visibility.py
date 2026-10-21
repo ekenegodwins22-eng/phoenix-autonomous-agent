@@ -10,7 +10,7 @@ def test_task_session_contains_authenticated_remote_browser_controls():
     assert 'Start live browser' in html
     assert 'browserTap(event)' in html
     assert 'scrollBrowser(-650)' in html
-    assert '<details>' in html
+    assert '<details' in html
     assert "control('resume')" in html
 
 
