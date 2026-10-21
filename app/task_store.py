@@ -47,10 +47,15 @@ def _connect():
     """.replace('__TASK_LOG_ID__', task_log_id).replace('__TASK_MESSAGE_ID__', task_log_id)
     conn.executescript(schema)
     for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT")):
-        try:
-            conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
-        except Exception:
-            pass
+        if using_postgres():
+            # IF NOT EXISTS avoids a duplicate-column error from concurrent
+            # web/worker startup migrations aborting the PostgreSQL transaction.
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN IF NOT EXISTS {column} {definition}")
+        else:
+            try:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
+            except Exception:
+                pass
     return conn
 
 
