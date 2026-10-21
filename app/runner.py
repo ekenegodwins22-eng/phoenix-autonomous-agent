@@ -187,7 +187,7 @@ async def _prepare_mailbox_email(page, state: dict, mailbox_context: dict):
     return {'filled': target.get('label') or target.get('name') or target.get('id') or 'email', 'alias_id': prepared.get('alias_id'), 'gmail_account_id': prepared.get('gmail_account_id'), 'reused': prepared.get('reused'), 'variation_type': prepared.get('variation_type')}
 
 
-def _fill_form(page):
+async def _fill_form(page):
     profile = synthetic_profile()
     fields = await _inspect_form_fields(page)
     filled, skipped, errors = [], [], []
