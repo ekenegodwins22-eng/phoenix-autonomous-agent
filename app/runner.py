@@ -46,7 +46,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_create_alias(address_type,variation_type,variation_label,custom_name,gmail_account_id,use_primary), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
+SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), go_back, click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), scroll(down,pages), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_create_alias(address_type,variation_type,variation_label,custom_name,gmail_account_id,use_primary), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
 
 
 def valid_url(url):
@@ -117,6 +117,29 @@ async def _browser_retry(operation, attempts=None):
             if attempt + 1 < attempts:
                 await asyncio.sleep(0.25 * (attempt + 1))
     raise last_error
+
+
+async def _go_back(page):
+    response = await _browser_retry(lambda: page.go_back(wait_until='domcontentloaded'))
+    return {'navigated': response is not None, 'url': page.url, 'title': await page.title()}
+
+
+async def _scroll_page(page, down=True, pages=1.0):
+    viewport_height = await page.evaluate('window.innerHeight') or 800
+    scroll_y_before = await page.evaluate('window.scrollY')
+    pixels = int(viewport_height * pages)
+    delta_y = pixels if down else -pixels
+    await _browser_retry(lambda: page.mouse.wheel(0, delta_y))
+    await page.wait_for_timeout(100)
+    scroll_y_after = await page.evaluate('window.scrollY')
+    return {
+        'direction': 'down' if down else 'up',
+        'pages': pages,
+        'pixels': pixels,
+        'scroll_y_before': scroll_y_before,
+        'scroll_y_after': scroll_y_after,
+        'moved': scroll_y_before != scroll_y_after,
+    }
 
 
 async def _inspect_form_fields(page):
@@ -302,6 +325,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     if not valid_url(target_url): raise ValueError('goto requires a valid http/https URL')
                     await _browser_retry(lambda: page.goto(target_url, wait_until='domcontentloaded'))
                     result = {"url":page.url,"title":await page.title()}
+                elif name == 'go_back':
+                    result = await _go_back(page)
                 elif name == 'click':
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(loc.click); result = {"clicked":action.get('target'),"url":page.url}
                 elif name == 'fill':
@@ -328,6 +353,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     loc = await _locate(page, str(action.get('target',''))); await _browser_retry(lambda: loc.press(str(action.get('key','Enter')))); result = {"pressed":action.get('key','Enter'),"target":action.get('target')}
                 elif name == 'wait':
                     await page.wait_for_timeout(max(0, min(int(action.get('milliseconds',500)),5000))); result = {"waited_ms":max(0,min(int(action.get('milliseconds',500)),5000))}
+                elif name == 'scroll':
+                    result = await _scroll_page(page, bool(action.get('down', True)), float(action.get('pages', 1.0)))
                 elif name == 'inspect': result = await _snapshot(page)
                 elif name == 'mailbox_health': result = await mailbox.health()
                 elif name == 'mailbox_session': result = await mailbox.session()

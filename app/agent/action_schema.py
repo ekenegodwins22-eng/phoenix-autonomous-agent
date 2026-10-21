@@ -1,9 +1,10 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ActionName = Literal[
     'goto',
+    'go_back',
     'click',
     'fill',
     'fill_form',
@@ -12,6 +13,7 @@ ActionName = Literal[
     'select',
     'press',
     'wait',
+    'scroll',
     'inspect',
     'mailbox_health',
     'mailbox_session',
@@ -66,6 +68,8 @@ class ActionRequest(BaseModel):
     length: int | None = None
     prefix: str | None = None
     milliseconds: int | None = None
+    down: bool | None = None
+    pages: float | None = Field(default=None, gt=0, le=10)
     key: str | None = None
     alias_email: str | None = None
     variation_type: str | None = None
