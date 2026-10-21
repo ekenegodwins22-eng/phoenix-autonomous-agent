@@ -77,6 +77,18 @@ pip install -r requirements.txt
 pytest -q
 ```
 
+## Browser Use Python agent integration
+
+Phoenix includes an optional adapter for the MIT-licensed Browser Use Python
+agent/library. Set `EXECUTION_ENGINE=browser_use` to route a task through
+Browser Use's `Agent` and `BrowserSession`; the adapter still uses Phoenix's
+configured model provider, protected proxy settings, task cancellation, and
+checkpoint callback. The default remains `EXECUTION_ENGINE=phoenix` so the
+Phoenix runner continues to provide mailbox actions, retained human-
+verification sessions, task chat, and the existing durable recovery behavior.
+The dependency is installed from `requirements.txt`, and the engine can be
+switched through deployment configuration without changing the frontend.
+
 ## Deployment caveats
 
 - Free Render services spin down after 15 minutes idle and local files are lost on spin-down/redeploy. Use a persistent storage option for the SQLite database or use managed Postgres before relying on saved accounts.

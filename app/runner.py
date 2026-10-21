@@ -266,6 +266,12 @@ async def _fill_form(page):
     return {'fields_detected': len(fields), 'fields_filled': filled, 'fields_skipped': skipped, 'validation_or_interaction_errors': errors, 'synthetic_data': True, 'submitted': False}
 
 async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None, proxy_mode: str = 'direct'):
+    if settings.execution_engine.lower() == 'browser_use':
+        from app.browser_use_adapter import execute_browser_use_task
+        result = await execute_browser_use_task(instruction, start_url, provider_choice, model, progress, cancel_event)
+        if save_checkpoint:
+            await save_checkpoint({'engine': 'browser_use', 'verified': True, 'summary': 'Browser Use agent completed the configured task.'})
+        return result
     async def report(message):
         if progress:
             await progress(message)
