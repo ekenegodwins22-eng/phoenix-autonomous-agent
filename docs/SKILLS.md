@@ -10,12 +10,15 @@ The model receives the user's task, recent action history, and a snapshot of the
 | Action | Parameters | Purpose |
 | --- | --- | --- |
 | `goto` | `url` | Navigate to an HTTP/HTTPS URL. |
+| `go_back` | none | Return to the previous page in browser history. |
 | `inspect` | none | Read current page URL, title, visible body text, and control metadata. |
 | `click` | `target` | Click a target found by label, placeholder, button/link role, visible text, or `css:` selector. |
 | `fill` | `target`, `value` | Fill a form field. Action history redacts the value. |
 | `select` | `target`, `value` | Select a dropdown option. |
 | `press` | `target`, `key` | Press a key on a target. |
 | `wait` | `milliseconds` | Wait for 0–5000 ms. |
+| `scroll` | optional `down`, `pages` | Scroll up or down by a page fraction/multiple (`0 < pages <= 10`). |
+| `find_text` | `text` | Scroll the first visible text match into view; only the found status and URL are returned. |
 | `done` | `summary` | End the task and return a structured result. |
 
 ## Mailbox actions

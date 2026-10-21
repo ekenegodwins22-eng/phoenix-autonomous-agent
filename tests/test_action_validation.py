@@ -20,12 +20,17 @@ def test_action_request_accepts_browser_use_navigation_controls():
 
     back = ActionRequest.model_validate({'action': 'go_back'})
     scroll = ActionRequest.model_validate({'action': 'scroll', 'down': False, 'pages': 0.5})
+    find_text = ActionRequest.model_validate({'action': 'find_text', 'text': 'Continue below'})
 
     assert back.action == 'go_back'
     assert scroll.model_dump(exclude_unset=True, exclude_none=True) == {
         'action': 'scroll',
         'down': False,
         'pages': 0.5,
+    }
+    assert find_text.model_dump(exclude_unset=True, exclude_none=True) == {
+        'action': 'find_text',
+        'text': 'Continue below',
     }
 
 
@@ -39,6 +44,8 @@ def test_action_request_accepts_browser_use_navigation_controls():
         {'action': 'mailbox_update_alias', 'alias_id': 'alias-1', 'fields': []},
         {'action': 'scroll', 'pages': 0},
         {'action': 'scroll', 'pages': 10.1},
+        {'action': 'find_text'},
+        {'action': 'find_text', 'text': '  '},
     ],
 )
 def test_action_request_rejects_unsupported_or_incomplete_shapes(payload):
@@ -135,3 +142,65 @@ def test_go_back_reports_navigation_result():
         'url': 'https://example.test/previous',
         'title': 'Previous page',
     }
+
+
+def test_find_text_scrolls_to_visible_match_without_returning_page_text():
+    from app import runner
+
+    class FakeMatch:
+        def __init__(self, visible):
+            self.visible = visible
+            self.scrolled = False
+
+        async def is_visible(self):
+            return self.visible
+
+        async def scroll_into_view_if_needed(self):
+            self.scrolled = True
+
+    class FakeMatches:
+        def __init__(self, matches):
+            self.items = matches
+
+        async def count(self):
+            return len(self.items)
+
+        def nth(self, index):
+            return self.items[index]
+
+    class FakePage:
+        url = 'https://example.test/article'
+
+        def __init__(self):
+            self.matches = [FakeMatch(False), FakeMatch(True)]
+
+        def get_by_text(self, text, exact):
+            assert text == 'Continue below'
+            assert exact is False
+            return FakeMatches(self.matches)
+
+    page = FakePage()
+    result = asyncio.run(runner._find_text(page, ' Continue below '))
+
+    assert result == {'found': True, 'url': 'https://example.test/article'}
+    assert page.matches[0].scrolled is False
+    assert page.matches[1].scrolled is True
+    assert 'Continue below' not in str(result)
+
+
+def test_find_text_reports_missing_match():
+    from app import runner
+
+    class FakeMatches:
+        async def count(self):
+            return 0
+
+    class FakePage:
+        url = 'https://example.test/article'
+
+        def get_by_text(self, text, exact):
+            return FakeMatches()
+
+    result = asyncio.run(runner._find_text(FakePage(), 'Missing heading'))
+
+    assert result == {'found': False, 'url': 'https://example.test/article'}

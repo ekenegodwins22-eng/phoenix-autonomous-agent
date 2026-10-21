@@ -14,6 +14,7 @@ ActionName = Literal[
     'press',
     'wait',
     'scroll',
+    'find_text',
     'inspect',
     'mailbox_health',
     'mailbox_session',
@@ -40,6 +41,7 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     'fill': ('target', 'value'),
     'fill_generated': ('target', 'name'),
     'generate_credential': ('name', 'kind'),
+    'find_text': ('text',),
     'select': ('target', 'value'),
     'press': ('target',),
     'mailbox_restore_session': ('alias_email',),
@@ -61,6 +63,7 @@ class ActionRequest(BaseModel):
 
     action: ActionName
     url: str | None = None
+    text: str | None = None
     target: str | None = None
     value: str | None = None
     name: str | None = None

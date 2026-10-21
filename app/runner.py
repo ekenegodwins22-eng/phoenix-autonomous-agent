@@ -46,7 +46,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), go_back, click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), scroll(down,pages), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_create_alias(address_type,variation_type,variation_label,custom_name,gmail_account_id,use_primary), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
+SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), go_back, click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), scroll(down,pages), find_text(text), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_create_alias(address_type,variation_type,variation_label,custom_name,gmail_account_id,use_primary), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
 
 
 def valid_url(url):
@@ -140,6 +140,16 @@ async def _scroll_page(page, down=True, pages=1.0):
         'scroll_y_after': scroll_y_after,
         'moved': scroll_y_before != scroll_y_after,
     }
+
+
+async def _find_text(page, text):
+    matches = page.get_by_text(text.strip(), exact=False)
+    for index in range(min(await matches.count(), 100)):
+        match = matches.nth(index)
+        if await match.is_visible():
+            await _browser_retry(match.scroll_into_view_if_needed)
+            return {'found': True, 'url': page.url}
+    return {'found': False, 'url': page.url}
 
 
 async def _inspect_form_fields(page):
@@ -355,6 +365,8 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     await page.wait_for_timeout(max(0, min(int(action.get('milliseconds',500)),5000))); result = {"waited_ms":max(0,min(int(action.get('milliseconds',500)),5000))}
                 elif name == 'scroll':
                     result = await _scroll_page(page, bool(action.get('down', True)), float(action.get('pages', 1.0)))
+                elif name == 'find_text':
+                    result = await _find_text(page, str(action.get('text', '')))
                 elif name == 'inspect': result = await _snapshot(page)
                 elif name == 'mailbox_health': result = await mailbox.health()
                 elif name == 'mailbox_session': result = await mailbox.session()
