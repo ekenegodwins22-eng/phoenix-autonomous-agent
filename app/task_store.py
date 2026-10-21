@@ -132,7 +132,12 @@ def claim_unconsumed_user_messages(task_id: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute("SELECT id,task_id,created_at,role,content FROM task_messages WHERE task_id=? AND role='user' AND consumed_at IS NULL ORDER BY id", (task_id,)).fetchall()
         if rows:
-            conn.execute("UPDATE task_messages SET consumed_at=? WHERE task_id=? AND role='user' AND consumed_at IS NULL", (now,task_id))
+            ids = [row['id'] for row in rows]
+            placeholders = ','.join('?' for _ in ids)
+            conn.execute(
+                f"UPDATE task_messages SET consumed_at=? WHERE task_id=? AND role='user' AND consumed_at IS NULL AND id IN ({placeholders})",
+                (now, task_id, *ids),
+            )
             conn.commit()
     return [dict(row) for row in rows]
 

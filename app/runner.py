@@ -23,7 +23,8 @@ class TaskIncomplete(RuntimeError):
 
 
 def _challenge_info(body: str, controls: list[dict]) -> dict | None:
-    text = f"{body} {' '.join(str(control) for control in controls)}".lower()
+    visible_controls = [control for control in controls if control.get("visible", True)]
+    text = f"{body} {' '.join(str(control) for control in visible_controls)}".lower()
     if "hcaptcha" in text:
         challenge_type = "hcaptcha"
     elif "recaptcha" in text:
@@ -55,7 +56,21 @@ async def _snapshot(page):
     try: body = (await page.locator('body').inner_text(timeout=5000))[:7000]
     except Exception: body = ''
     try:
-        controls = await page.locator('input,textarea,select,button,[role=button],[role=link]').evaluate_all("els => els.slice(0,100).map((e,i)=>({i,tag:e.tagName.toLowerCase(),type:e.type||'',text:(e.innerText||e.value||e.getAttribute('aria-label')||'').trim().slice(0,100),name:e.name||'',id:e.id||'',placeholder:e.placeholder||'',label:e.labels?.[0]?.innerText||'',required:!!e.required,href:e.href||''}))")
+        controls = await page.locator('input,textarea,select,button,[role=button],[role=link]').evaluate_all("""els => els.filter(e => {
+            const style = window.getComputedStyle(e);
+            const rect = e.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' &&
+                Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0 &&
+                !e.closest('[aria-hidden="true"]');
+        }).slice(0,100).map((e,i) => {
+            const metadata = [e.type, e.name, e.id, e.placeholder,
+                e.getAttribute('aria-label') || '', e.labels?.[0]?.innerText || ''].join(' ');
+            const sensitive = /password|passcode|secret|token|one.?time|verification|otp/i.test(metadata);
+            const value = String(e.value || '');
+            return {i,tag:e.tagName.toLowerCase(),type:e.type||'',visible:true,
+                text:(sensitive && value ? '[redacted]' : (e.innerText||value||e.getAttribute('aria-label')||'')).trim().slice(0,100),
+                name:e.name||'',id:e.id||'',placeholder:e.placeholder||'',label:e.labels?.[0]?.innerText||'',required:!!e.required,href:e.href||''};
+        })""")
     except Exception: controls = []
     return {"url": page.url, "title": await page.title(), "body": body, "controls": controls, "challenge": _challenge_info(body, controls)}
 

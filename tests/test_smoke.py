@@ -110,6 +110,41 @@ def test_task_chat_messages_persist_and_are_claimed_once(monkeypatch, tmp_path):
     assert task_store.claim_unconsumed_user_messages(task['id']) == []
 
 
+def test_task_chat_claim_leaves_later_messages_unconsumed(monkeypatch, tmp_path):
+    from app import config, task_store
+    monkeypatch.setattr(config.settings, 'database_url', '')
+    monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'message-race.db'))
+    task = task_store.create_task(owner_id=3, instruction='Inspect', start_url=None, timeout_seconds=30, provider='auto', model=None)
+    first = task_store.add_message(task['id'], 3, 'user', 'First message')
+    original_connect = task_store._connect
+    inserted = {'done': False}
+
+    class InterleavingConnection:
+        def __init__(self, connection):
+            self.connection = connection
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+        def execute(self, sql, params=()):
+            if sql.startswith('UPDATE task_messages SET consumed_at=') and not inserted['done']:
+                self.connection.execute(
+                    'INSERT INTO task_messages (task_id,owner_id,created_at,role,content) VALUES (?,?,?,?,?)',
+                    (task['id'], 3, task_store._now(), 'user', 'Arrived after the read'),
+                )
+                inserted['done'] = True
+            return self.connection.execute(sql, params)
+        def commit(self):
+            return self.connection.commit()
+
+    monkeypatch.setattr(task_store, '_connect', lambda: InterleavingConnection(original_connect()))
+    claimed = task_store.claim_unconsumed_user_messages(task['id'])
+    assert [message['id'] for message in claimed] == [first['id']]
+    next_claim = task_store.claim_unconsumed_user_messages(task['id'])
+    assert [message['content'] for message in next_claim] == ['Arrived after the read']
+
+
 def test_registration_has_no_verification(monkeypatch, tmp_path):
     from app import config, auth
     monkeypatch.setattr(config.settings, 'database_path', str(tmp_path / 'users.db'))
@@ -183,6 +218,14 @@ def test_runner_detects_captcha_without_attempting_bypass():
     assert info['type'] == 'recaptcha'
     assert 'authorized_site_accessible_alternative' in info['resolution_methods']
     assert _challenge_hint('Normal page content', []) is None
+
+
+def test_runner_ignores_hidden_captcha_metadata():
+    from app.runner import _challenge_info
+    hidden = [{'id': 'g-recaptcha-response', 'visible': False}]
+    visible = [{'id': 'recaptcha-widget', 'visible': True}]
+    assert _challenge_info('Normal sign-in form', hidden) is None
+    assert _challenge_info('Normal sign-in form', visible)['type'] == 'recaptcha'
 
 
 def test_task_status_supports_human_handoff():
