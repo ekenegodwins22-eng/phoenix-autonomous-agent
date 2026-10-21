@@ -7,6 +7,7 @@ from app.mailbox import mailbox
 from app.config import settings
 from app.credentials import generate_value
 from app.form_data import synthetic_profile, classify_field, constrained_value
+from app.agent.action_schema import ActionRequest
 from app.agent.prompt_loader import InstructionConfigError, build_effective_instructions
 from app.proxy import configured_proxy
 
@@ -45,7 +46,7 @@ def _challenge_hint(body: str, controls: list[dict]) -> str | None:
         return info["message"]
     return None
 
-SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
+SYSTEM = """Operational behavior is loaded from the repository AGENT.md file. Follow it as the authoritative configurable instruction source. Return exactly one JSON action object. Action protocol: goto(url), click(target), fill(target,value), fill_form, fill_generated(target,name), generate_credential(name,kind,length,prefix), select(target,value), press(target,key), wait(milliseconds), inspect, mailbox_health, mailbox_session, mailbox_restore_session(alias_email), mailbox_accounts, mailbox_aliases, mailbox_prepare_email(target,variation_type,address_type,gmail_account_id), mailbox_messages(alias_id), mailbox_get_alias(alias_id), mailbox_update_alias(alias_id,fields), mailbox_delete_alias(alias_id), mailbox_create_alias(address_type,variation_type,variation_label,custom_name,gmail_account_id,use_primary), mailbox_list_messages, mailbox_get_message(message_id), mailbox_fill_verification_code(target,pattern,alias_id), mailbox_open_verification_link(alias_id), mailbox_attachment(message_id,attachment_id), done(summary). Use target as a visible label/text/placeholder or css:selector. Never expose secrets, credentials, cookies, OTPs, or verification URLs in results."""
 
 
 def valid_url(url):
@@ -81,13 +82,16 @@ async def _choose_action(instruction, history, page_state, step, provider_choice
     last_provider, last_model = provider_choice, model
     for attempt in range(max(0, settings.model_action_retries) + 1):
         if attempt:
-            prompt['correction'] = 'The previous response was not a valid action object. Continue the unfinished task and return exactly one JSON action object; do not explain or claim completion.'
+            prompt['correction'] = 'The previous response was not a supported action or omitted required arguments. Continue the unfinished task and return exactly one JSON action object; do not explain or claim completion.'
         raw, last_provider, last_model = await chat([{"role":"system","content":system_prompt}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
         try:
             match = re.search(r'\{.*\}', raw, re.S)
             action = json.loads(match.group(0) if match else raw)
-            if not isinstance(action, dict) or not isinstance(action.get('action'), str): raise ValueError('missing action')
-            return action, last_provider, last_model
+            if not isinstance(action, dict) or not isinstance(action.get('action'), str):
+                raise ValueError('missing action')
+            action['action'] = action['action'].lower()
+            validated_action = ActionRequest.model_validate(action)
+            return validated_action.model_dump(exclude_unset=True, exclude_none=True), last_provider, last_model
         except Exception:
             continue
     return {"action":"inspect"}, last_provider, last_model
@@ -183,7 +187,7 @@ async def _prepare_mailbox_email(page, state: dict, mailbox_context: dict):
     return {'filled': target.get('label') or target.get('name') or target.get('id') or 'email', 'alias_id': prepared.get('alias_id'), 'gmail_account_id': prepared.get('gmail_account_id'), 'reused': prepared.get('reused'), 'variation_type': prepared.get('variation_type')}
 
 
-async def _fill_form(page):
+def _fill_form(page):
     profile = synthetic_profile()
     fields = await _inspect_form_fields(page)
     filled, skipped, errors = [], [], []

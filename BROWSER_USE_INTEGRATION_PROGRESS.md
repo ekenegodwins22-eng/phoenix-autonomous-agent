@@ -16,10 +16,13 @@ Phoenix's documented product contract is a persistent, authenticated autonomous 
 
 - Read Phoenix `AGENT.md`, shared skill, browser skill, recovery skill, and README.
 - Retrieved Phoenix `main` at `d8edaad` into this workspace because direct authenticated `git clone` is unavailable here; GitHub API access is available for reads and commits.
+- Published this integration assessment and guardrails to `main` as commit `f846e592e297cb8b4381353d2ff49ce85786192d`.
 - Cloned the public Browser Use prototype. No Browser Use implementation has been copied into Phoenix yet.
 - Mapped Phoenix's runner/provider/browser/task flow and the live human-verification UI. Phoenix currently owns its action protocol, model routing, serialized Playwright session, mailbox tools, task checkpoints, user messages, and browser handoff.
 - Confirmed Browser Use's `Agent` accepts a custom `BaseChatModel`, custom tools, and a `BrowserSession`; its session is a CDP/event-driven lifecycle, not a drop-in Playwright page. Its full package also brings a large provider, cloud, and browser-tool dependency set.
-- No product-code changes have been made in this integration effort. The integration will proceed in small Phoenix-native slices, starting with typed validation for Phoenix's existing action protocol rather than a wholesale runtime swap or a large initial dependency increase.
+- Added a local Pydantic `ActionRequest` schema for all current browser/mailbox actions and validation before execution. Unknown actions and missing or malformed required arguments are retried; valid legacy actions still pass through without adding a Browser Use runtime dependency.
+- Focused action-validation tests pass: `PYTHONPATH=. uv run --with-requirements requirements.txt pytest -q tests/test_action_validation.py` (7 passed).
+- Full Phoenix test suite passes: `PYTHONPATH=. uv run --with-requirements requirements.txt pytest -q` (66 passed, 3 deprecation warnings).
 - Existing baseline remains healthy: `d8edaad` passed CI run `39618700443` and is live on the existing Render service.
 
 ## Integration Guardrails
@@ -32,14 +35,13 @@ Phoenix's documented product contract is a persistent, authenticated autonomous 
 
 ## Next Steps
 
-1. Publish this assessment checkpoint to Phoenix `main`.
-2. Add Pydantic validation for the current action names and their required fields, following Browser Use's typed action-schema approach while keeping Phoenix's existing model, mailbox, browser, and task boundaries.
-3. Add focused tests for valid, malformed, and unsupported model actions; then push this code patch and record its commit and verification here.
-4. Continue assessing Browser Use capabilities for later user-facing slices; verify each production change in CI and on the existing Render service.
+1. Push the typed-action patch with this progress update after local verification.
+2. Verify the new commit in GitHub Actions and the existing Render deployment.
+3. Continue assessing Browser Use capabilities for later user-facing slices; verify each production change in CI and on the existing Render service.
 
 ## Current Stop Point
 
 - Working copies: `browser-use/` (prototype) and `phoenix-autonomous-agent/` (Phoenix source snapshot).
 - Phoenix remote branch: `main`, based at `d8edaad` when this snapshot was fetched.
-- This progress file is not yet pushed. No integration code has been pushed.
-- Next action: commit this checkpoint, then implement the typed action-validation slice.
+- Progress checkpoint is pushed as `f846e592e297cb8b4381353d2ff49ce85786192d`; the typed action-validation code and focused tests are local and not yet pushed.
+- Next action: push the implementation and updated progress record, then verify CI and production.
