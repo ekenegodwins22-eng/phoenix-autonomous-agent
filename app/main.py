@@ -1,5 +1,6 @@
+import secrets
 import asyncio, logging
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pathlib import Path
@@ -179,7 +180,7 @@ async def create_task(request: TaskRequest, user=Depends(current_user)):
         raise HTTPException(status_code=422, detail='Configured proxy mode requested but no protected proxy is configured')
     if request.proxy_mode == 'direct' and settings.browser_proxy_required:
         raise HTTPException(status_code=422, detail='A proxy is required by server configuration for this deployment')
-    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None)
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort)
     asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
@@ -492,6 +493,58 @@ async def task_browser_action(task_ref: str, payload: BrowserActionRequest, user
     except HTTPException: raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f'Browser action failed: {type(exc).__name__}: {str(exc)[:180]}')
+
+
+UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024
+UPLOAD_ROOT = Path(settings.database_path).resolve().parent / 'uploads'
+
+
+@app.post('/tasks/{task_ref}/uploads', status_code=201)
+async def upload_task_file(task_ref: str, file: UploadFile = File(...), user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    data = await file.read(UPLOAD_LIMIT_BYTES + 1)
+    if len(data) > UPLOAD_LIMIT_BYTES:
+        raise HTTPException(status_code=413, detail='File is larger than 10 MB')
+    if not data:
+        raise HTTPException(status_code=422, detail='File is empty')
+    safe_name = Path(file.filename or 'upload.bin').name[:200] or 'upload.bin'
+    target_dir = UPLOAD_ROOT / item['id']
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stored = target_dir / f"{secrets.token_hex(6)}-{safe_name}"
+    stored.write_bytes(data)
+    record = task_store.add_file(item['id'], user['id'], safe_name, file.content_type, len(data), str(stored))
+    return {k: v for k, v in record.items() if k != 'path'}
+
+
+@app.get('/tasks/{task_ref}/artifacts')
+async def task_artifacts(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    files = task_store.list_files(item['id'], owner_id=user['id'])
+    uploads = [{'id': f['id'], 'kind': 'upload', 'name': f['name'], 'content_type': f['content_type'], 'size': f['size'], 'created_at': f['created_at'], 'url': f"/tasks/{item['slug']}/artifacts/{f['id']}"} for f in files]
+    shot = None
+    if item.get('status') == 'waiting_human' and browser.current_page is not None and browser.current_task_id == item['id']:
+        shot = {'kind': 'live_screenshot', 'name': 'current browser view', 'url': f"/tasks/{item['slug']}/screenshot"}
+    return {'task_id': item['id'], 'slug': item['slug'], 'artifacts': uploads + ([shot] if shot else [])}
+
+
+@app.get('/tasks/{task_ref}/artifacts/{file_id}')
+async def task_artifact_download(task_ref: str, file_id: int, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    record = task_store.get_file(item['id'], file_id, user['id'])
+    if not record or not Path(record['path']).is_file():
+        raise HTTPException(status_code=404, detail='File not found')
+    return FileResponse(record['path'], media_type=record['content_type'] or 'application/octet-stream', filename=record['name'])
+
+
+@app.get('/tasks/{task_ref}/summary')
+async def task_summary(task_ref: str, user=Depends(current_user)):
+    item = _task_for_user(task_ref, user)
+    lines = [f"Phoenix task: {item['instruction']}", f"Status: {item.get('status')}"]
+    if item.get('model'): lines.append(f"Model: {item['model']}")
+    if item.get('effort'): lines.append(f"Effort: {item['effort']}")
+    if item.get('result'): lines.append('Result:\n' + str(item['result'])[:4000])
+    if item.get('error'): lines.append('Error: ' + str(item['error'])[:1000])
+    return {'task_id': item['id'], 'slug': item['slug'], 'summary': '\n'.join(lines), 'share_path': f"/tasks/{item['slug']}"}
 
 
 @app.get('/tasks', response_model=list[TaskStatus])

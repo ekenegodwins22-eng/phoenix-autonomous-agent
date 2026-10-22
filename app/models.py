@@ -12,6 +12,7 @@ class TaskRequest(BaseModel):
     provider: Literal["primary", "gemini", "auto"] = "auto"
     model: str | None = Field(default=None, min_length=1, max_length=160)
     proxy_mode: Literal["direct", "configured"] = "direct"
+    effort: Literal["low", "medium", "high"] | None = None
 
 class TaskStatus(BaseModel):
     id: str
@@ -30,6 +31,8 @@ class TaskStatus(BaseModel):
     model: str | None = None
     proxy_mode: Literal["direct", "configured"] = "direct"
     proxy_identifier: str | None = None
+    effort: str | None = None
+    attachment_count: int = 0
     recovery_count: int = 0
     cancel_requested: bool = False
     session_url: str | None = None

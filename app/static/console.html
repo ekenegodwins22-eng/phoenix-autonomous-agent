@@ -222,7 +222,7 @@ label.lab:first-child{margin-top:0}
         <div class="composer" id="homeComposer">
           <textarea id="homeInstruction" rows="3" placeholder="Describe what you want the agent to do..." aria-label="Describe the task"></textarea>
           <div class="cbar">
-            <button class="ib round" id="homeAttach" type="button" title="Attachments are not supported by this server yet" disabled aria-label="Attach files">
+            <button class="ib round" id="homeAttach" type="button" title="Attach files" aria-label="Attach files">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"/></svg>
             </button>
             <button class="ib round" id="homeSettings" type="button" title="Run options, models and proxy" aria-label="Run options">
@@ -233,13 +233,13 @@ label.lab:first-child{margin-top:0}
               <select id="homeModel" aria-label="Model"></select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
-            <label class="chipsel effort" id="homeEffortWrap" title="Effort (sent with the task once the server supports it)">
+            <label class="chipsel effort" id="homeEffortWrap" title="Effort for the task">
               <select id="homeEffort" aria-label="Effort">
-                <option value="Low">Low</option><option value="Medium">Medium</option><option value="High" selected>High</option><option value="Max">Max</option>
+                <option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
               </select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
-            <button class="ib round" id="homeFast" type="button" title="Fast mode (not yet supported by this server)" aria-pressed="false" aria-label="Fast mode">
+            <button class="ib round" id="homeFast" type="button" hidden aria-label="Fast mode">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
             </button>
             <button class="send" id="homeSubmit" type="button" aria-label="Start task" disabled>
@@ -270,7 +270,7 @@ label.lab:first-child{margin-top:0}
         <div class="composer" id="taskComposer">
           <textarea id="composer" rows="2" placeholder="Message the agent..." aria-label="Message the agent"></textarea>
           <div class="cbar">
-            <button class="ib round" id="taskAttach" type="button" title="Attachments are not supported by this server yet" disabled aria-label="Attach files">
+            <button class="ib round" id="taskAttach" type="button" title="Attach files" aria-label="Attach files">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"/></svg>
             </button>
             <button class="ib round" id="taskSettings" type="button" title="Run options, models and proxy" aria-label="Run options">
@@ -282,10 +282,10 @@ label.lab:first-child{margin-top:0}
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
             <label class="chipsel effort muted" title="Effort applies to new tasks">
-              <select id="taskEffort" aria-label="Effort" disabled><option>High</option></select>
+              <select id="taskEffort" aria-label="Effort"><option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
-            <button class="ib round" id="taskFast" type="button" title="Fast mode (not yet supported by this server)" disabled aria-label="Fast mode">
+            <button class="ib round" id="taskFast" type="button" hidden aria-label="Fast mode">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
             </button>
             <span class="cost hidden" id="costLabel"></span>
@@ -304,6 +304,10 @@ label.lab:first-child{margin-top:0}
     <div class="panel-head"><h3>Files</h3><button class="ib" type="button" data-close aria-label="Close">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="panel-body">
+      <div class="sect">
+        <h4>Artifacts</h4>
+        <div id="artifactList" class="hint" style="margin:0">Open a task to see its files.</div>
+      </div>
       <div class="sect">
         <h4>Remote browser</h4>
         <img id="shot" class="shot hidden" alt="Remote browser screenshot">
@@ -360,7 +364,23 @@ label.lab:first-child{margin-top:0}
 (function(){
 'use strict';
 const KEY='phoenix_token';
-const EP={messages:'/messages',logs:'/logs',resume:'/resume',shot:'/screenshot'};
+const EP={messages:'/messages',logs:'/logs',resume:'/resume',shot:'/screenshot',uploads:'/uploads',artifacts:'/artifacts',summary:'/summary'};
+async function uploadFiles(ref,files){
+  for(const f of files){
+    const fd=new FormData();fd.append('file',f,f.name);
+    const r=await fetch('/tasks/'+encodeURIComponent(ref)+EP.uploads,{method:'POST',headers:token?{Authorization:'Bearer '+token}:{},body:fd});
+    if(!r.ok){let d='upload failed';try{d=(await r.json()).detail||d}catch(e){}throw new Error(d)}
+  }
+}
+function pickFiles(onPick){const i=document.createElement('input');i.type='file';i.multiple=true;i.onchange=()=>onPick([...i.files]);i.click()}
+$('homeAttach').onclick=()=>pickFiles(f=>{window._pendingFiles=f;$('homeErr').textContent=f.length+' file(s) attached; they upload when the task starts.';$('homeErr').className='hint'});
+$('taskAttach').onclick=()=>pickFiles(async f=>{if(!selectedRef)return;try{await uploadFiles(selectedRef,f);$('msgStatus').textContent=f.length+' file(s) uploaded.';await loadArtifacts()}catch(e){$('msgStatus').textContent=e.message}});
+async function loadArtifacts(){
+  if(!selectedRef)return;
+  try{const d=await api('/tasks/'+encodeURIComponent(selectedRef)+EP.artifacts);const a=d.artifacts||[];
+    $('artifactList').innerHTML=a.length?a.map(x=>'<div class="hint" style="margin:0 0 6px"><a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.name)+'</a> '+esc(x.size)+' bytes</div>').join(''):'No files yet.';
+  }catch(e){$('artifactList').textContent=e.message}
+}
 const RUN=['queued','running','recovering','waiting_human'];
 const DONE=['completed','failed','cancelled'];
 let token=localStorage.getItem(KEY)||'';
@@ -374,7 +394,7 @@ let logsOpen=false;
 let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
-const cfg={model:'auto|',effort:'High',fast:false};
+const cfg={model:'auto|',effort:'',fast:false};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -422,7 +442,7 @@ $('sideBtn').onclick=()=>{const open=!$('sidebar').classList.contains('open');cl
 $('scrim').onclick=()=>{setSide(false);closePanels()};
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{closePanels();$('scrim').classList.remove('open')});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){setSide(false);closePanels();$('scrim').classList.remove('open')}});
-$('filesBtn').onclick=()=>openPanel('filesPanel');
+$('filesBtn').onclick=()=>{openPanel('filesPanel');loadArtifacts()};
 $('keyBtn').onclick=()=>openPanel('settingsPanel');
 $('homeSettings').onclick=()=>openPanel('settingsPanel');
 $('taskSettings').onclick=()=>openPanel('settingsPanel');
@@ -432,10 +452,12 @@ $('refreshBtn').onclick=()=>{loadTasks();if(selectedRef)loadDetail()};
 $('newTaskBtn').onclick=()=>{setSide(false);location.hash=''};
 $('shotBtn').onclick=refreshShot;
 $('shareBtn').onclick=async()=>{
-  const url=location.href;
-  try{await navigator.clipboard.writeText(url);$('taskErr').textContent='Link copied.';$('taskErr').className='ok'}
-  catch(e){$('taskErr').textContent=url;$('taskErr').className='hint'}
-  setTimeout(()=>{$('taskErr').textContent='';$('taskErr').className='err'},2500);
+  if(!selectedRef)return;
+  try{const d=await api('/tasks/'+encodeURIComponent(selectedRef)+EP.summary);const text=d.summary;
+    try{await navigator.clipboard.writeText(text);$('taskErr').textContent='Task summary copied.'}catch(e){$('taskErr').textContent=text}
+    $('taskErr').className='ok';
+  }catch(err){$('taskErr').textContent=err.message;$('taskErr').className='err'}
+  setTimeout(()=>{$('taskErr').textContent='';$('taskErr').className='err'},4000);
 };
 
 /* ---------- routing: '' = home composer, '#/task/<ref>' = task view ---------- */
@@ -615,12 +637,14 @@ $('homeSubmit').onclick=async()=>{
   if(instruction.length<3){$('homeErr').textContent='Describe the task (at least 3 characters).';return}
   const [provider,model]=cfg.model.split('|');
   const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
+  if(cfg.effort)body.effort=cfg.effort;
   if(model)body.model=model;
   const su=$('startUrl').value.trim();if(su)body.start_url=su;
   const to=$('timeout').value.trim();if(to)body.timeout_seconds=Number(to);
   $('homeSubmit').disabled=true;
   try{
     const t=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
+    if(window._pendingFiles&&window._pendingFiles.length){try{await uploadFiles(t.slug||t.id,window._pendingFiles)}catch(e){}window._pendingFiles=null}
     $('homeInstruction').value='';homeSync();
     await loadTasks();
     location.hash='#/task/'+encodeURIComponent(t.slug||t.id);

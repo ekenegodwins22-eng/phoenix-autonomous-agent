@@ -34,3 +34,36 @@ def test_console_carries_mit_attribution():
     assert 'browser-use' in html and 'MIT' in html
     notice = (ROOT / 'NOTICE.md').read_text()
     assert 'MIT License' in notice and 'browser-use' in notice
+
+
+def test_console_wires_effort_uploads_artifacts_and_share():
+    html = (ROOT / 'app' / 'static' / 'console.html').read_text()
+    for path in ("uploads:'/uploads'", "artifacts:'/artifacts'", "summary:'/summary'", "homeEffort", "taskAttach", "shareBtn", "filesBtn", "artifactList"):
+        assert path in html, path
+
+
+def test_upload_artifacts_and_summary_round_trip(tmp_path, monkeypatch):
+    from app import main as m
+    client = TestClient(app)
+    email = 'console-upload@example.com'
+    client.post('/auth/register', json={'email': email, 'password': 'correct-horse-7'})
+    token = client.post('/auth/login', json={'email': email, 'password': 'correct-horse-7'}).json()['access_token']
+    h = {'Authorization': 'Bearer ' + token}
+    monkeypatch.setattr(m, 'UPLOAD_ROOT', tmp_path)
+    async def _noop(task_id):
+        return None
+    monkeypatch.setattr(m, 'start_task', _noop)
+    created = client.post('/tasks', json={'instruction': 'check upload wiring', 'effort': 'low'}, headers=h)
+    assert created.status_code == 202, created.text
+    body = created.json()
+    assert body['effort'] == 'low'
+    ref = body['slug']
+    up = client.post(f'/tasks/{ref}/uploads', headers=h, files={'file': ('notes.txt', b'hello', 'text/plain')})
+    assert up.status_code == 201, up.text
+    arts = client.get(f'/tasks/{ref}/artifacts', headers=h).json()['artifacts']
+    assert arts and arts[0]['name'] == 'notes.txt'
+    dl = client.get(arts[0]['url'], headers=h)
+    assert dl.status_code == 200 and dl.content == b'hello'
+    summary = client.get(f'/tasks/{ref}/summary', headers=h).json()
+    assert 'check upload wiring' in summary['summary'] and 'Effort: low' in summary['summary']
+    assert client.post(f'/tasks/{ref}/uploads', headers=h, files={'file': ('x.txt', b'', 'text/plain')}).status_code == 422

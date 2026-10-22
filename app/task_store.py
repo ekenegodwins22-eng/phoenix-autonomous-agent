@@ -44,9 +44,16 @@ def _connect():
       FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, id);
+    CREATE TABLE IF NOT EXISTS task_files (
+      id __TASK_LOG_ID__, task_id TEXT NOT NULL, owner_id INTEGER NOT NULL,
+      name TEXT NOT NULL, content_type TEXT, size INTEGER NOT NULL, path TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_files_task ON task_files(task_id, id);
     """.replace('__TASK_LOG_ID__', task_log_id).replace('__TASK_MESSAGE_ID__', task_log_id)
     conn.executescript(schema)
-    for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT")):
+    for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT"), ("effort", "TEXT"), ("attachment_count", "INTEGER NOT NULL DEFAULT 0")):
         if using_postgres():
             # IF NOT EXISTS avoids a duplicate-column error from concurrent
             # web/worker startup migrations aborting the PostgreSQL transaction.
@@ -73,12 +80,12 @@ def _slug(instruction: str, task_id: str) -> str:
     return f'{words}-{task_id[:6]}'
 
 
-def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None) -> dict:
+def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None, effort: str | None = None) -> dict:
     task_id = secrets.token_hex(8)
     slug = _slug(instruction, task_id)
     now = _now()
     with _connect() as conn:
-        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier))
+        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier,effort))
         conn.execute("INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)", (task_id,now,'info','Task accepted and queued.'))
         conn.commit()
     return get_task(task_id)
@@ -140,6 +147,30 @@ def claim_unconsumed_user_messages(task_id: str) -> list[dict]:
             )
             conn.commit()
     return [dict(row) for row in rows]
+
+
+def add_file(task_id: str, owner_id: int, name: str, content_type: str | None, size: int, path: str) -> dict:
+    now = _now()
+    with _connect() as conn:
+        cur = conn.execute('INSERT INTO task_files (task_id,owner_id,name,content_type,size,path,created_at) VALUES (?,?,?,?,?,?,?)', (task_id, owner_id, name, content_type, size, path, now))
+        conn.execute('UPDATE tasks SET attachment_count=attachment_count+1 WHERE id=?', (task_id,))
+        conn.commit()
+        file_id = cur.lastrowid
+    return {'id': file_id, 'task_id': task_id, 'name': name, 'content_type': content_type, 'size': size, 'created_at': now}
+
+
+def list_files(task_id: str, owner_id: int | None = None) -> list[dict]:
+    with _connect() as conn:
+        if owner_id is not None and not conn.execute('SELECT 1 FROM tasks WHERE id=? AND owner_id=?', (task_id, owner_id)).fetchone():
+            return []
+        rows = conn.execute('SELECT id,task_id,name,content_type,size,path,created_at FROM task_files WHERE task_id=? ORDER BY id', (task_id,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_file(task_id: str, file_id: int, owner_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute('SELECT f.id,f.task_id,f.name,f.content_type,f.size,f.path FROM task_files f JOIN tasks t ON t.id=f.task_id WHERE f.task_id=? AND f.id=? AND t.owner_id=?', (task_id, file_id, owner_id)).fetchone()
+    return dict(row) if row else None
 
 
 def _update(task_id: str, **fields):
