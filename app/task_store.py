@@ -169,13 +169,24 @@ def add_log(task_id: str, message: str, level: str = 'info'):
 
 
 def save_checkpoint(task_id: str, checkpoint: dict):
-    """Persist only the caller-provided redacted execution checkpoint."""
-    _update(task_id, checkpoint=json.dumps(checkpoint, ensure_ascii=False)[:8000])
+    """Persist a versioned, redacted checkpoint in one atomic UPDATE."""
+    from app import checkpoint as checkpoint_format
+    payload = checkpoint_format.dumps(checkpoint)
+    with _connect() as conn:
+        conn.execute('UPDATE tasks SET checkpoint=?, updated_at=? WHERE id=?', (payload, _now(), task_id))
+        conn.commit()
+
+
+def read_checkpoint(task_id: str) -> tuple[str, dict | None]:
+    """Return (status, state) for the stored checkpoint: ok, missing, invalid, legacy or unsupported_version."""
+    from app import checkpoint as checkpoint_format
+    item = get_task(task_id)
+    return checkpoint_format.decode(item.get('checkpoint') if item else None)
 
 
 def claim_task(task_id: str, worker_token: str) -> bool:
     with _connect() as conn:
-        cur = conn.execute("UPDATE tasks SET status='running', worker_token=?, cancel_requested=0, updated_at=? WHERE id=? AND status='queued' AND worker_token IS NULL", (worker_token,_now(),task_id))
+        cur = conn.execute("UPDATE tasks SET status='running', worker_token=?, cancel_requested=0, updated_at=? WHERE id=? AND status IN ('queued','recovering') AND worker_token IS NULL", (worker_token,_now(),task_id))
         conn.commit()
         return cur.rowcount == 1
 
@@ -236,14 +247,53 @@ def queue_retry(task_id: str) -> dict | None:
 
 
 def recover_after_restart() -> list[str]:
-    """Only queued work is eligible. Running/human tasks are failed to avoid duplicate side effects."""
+    """Recover interrupted tasks from their verified checkpoint, or stop them with a clear reason.
+
+    Rows in ``running``/``recovering`` are reset to ``recovering`` only when their checkpoint allows
+    a safe resume. A checkpoint in ``pending``/``error`` for a side-effect action, or a missing or
+    invalid checkpoint, fails the task with a reason; nothing is replayed blindly.
+    ``waiting_human`` rows are handled by ``recover_waiting_on_restart``.
+    Returns the ids of queued tasks plus the ids of tasks moved to ``recovering``.
+    """
+    from app import checkpoint as checkpoint_format
     with _connect() as conn:
-        rows = conn.execute("SELECT id,status FROM tasks WHERE status IN ('running','waiting_human','recovering')").fetchall()
-        ids = [row['id'] for row in rows]
+        rows = conn.execute("SELECT id,status,checkpoint,instruction FROM tasks WHERE status IN ('running','recovering')").fetchall()
         now = _now()
-        for task_id in ids:
-            conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted while task was active; execution was not replayed because a browser action outcome may be uncertain.', 'Task stopped safely after worker restart; manual review is required before retrying.', now,task_id))
-            conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (task_id,now,'recovery','Worker restart detected; active task not replayed to prevent duplicate side effects.'))
+        recovering = []
+        for row in rows:
+            status, state = checkpoint_format.decode(row['checkpoint'])
+            allowed, reason = (False, f'checkpoint {status}') if status != 'ok' else checkpoint_format.resume_decision(state)
+            if allowed:
+                conn.execute("UPDATE tasks SET status='recovering', progress=?, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted; resuming from the last verified checkpoint.', now, row['id']))
+                conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; resuming from verified checkpoint at step {state["step"]}.'))
+                recovering.append(row['id'])
+            else:
+                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", (f'Worker restarted; not resumed automatically: {reason}.', 'Task stopped safely after worker restart; manual review is required before retrying.', now, row['id']))
+                conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; not resumed: {reason}.'))
         queued = conn.execute("SELECT id FROM tasks WHERE status='queued' ORDER BY created_at").fetchall()
         conn.commit()
-    return [row['id'] for row in queued]
+    return [row['id'] for row in queued] + recovering
+
+
+def recover_waiting_on_restart() -> list[str]:
+    """Tasks paused for human verification keep their pending challenge and resume after restart.
+
+    The browser session cannot survive a restart, so the task is re-queued into ``recovering``.
+    The runner restores the last verified URL and detects the challenge again before pausing.
+    """
+    from app import checkpoint as checkpoint_format
+    with _connect() as conn:
+        rows = conn.execute("SELECT id,checkpoint FROM tasks WHERE status='waiting_human'").fetchall()
+        now = _now()
+        ids = []
+        for row in rows:
+            status, state = checkpoint_format.decode(row['checkpoint'])
+            if status == 'ok' and state.get('url') and state.get('phase') in {'challenge', 'verified'}:
+                conn.execute("UPDATE tasks SET status='recovering', progress=?, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted while waiting for human verification; restoring the page to re-check the challenge.', now, row['id']))
+                conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', 'Worker restart detected while paused for human verification; the pending challenge was kept and the page will be re-checked.'))
+                ids.append(row['id'])
+            else:
+                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted while paused for human verification; no safe checkpoint to restore the page.', 'Task stopped safely after worker restart; manual review is required before retrying.', now, row['id']))
+                conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', 'Worker restart detected while paused; no safe checkpoint, so the task was stopped.'))
+        conn.commit()
+    return ids

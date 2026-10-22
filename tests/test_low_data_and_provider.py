@@ -69,11 +69,13 @@ def test_health_and_static_shell_are_compressed_or_private_cached():
     assert 'no-store' in task_shell.headers.get('cache-control', '')
 
 
-def test_completion_path_persists_verified_checkpoint():
+def test_completion_path_persists_done_checkpoint_without_claiming_proof():
     source = (Path(__file__).parents[1] / 'app' / 'runner.py').read_text()
-    assert "'action': 'done'" in source
-    assert "'verified': True" in source
+    assert "action='done'" in source
+    assert "'done', history" in source
     assert 'await save_checkpoint' in source
+    # The model's own completion claim is not Phoenix-verified evidence.
+    assert "verified=False, proxy_mode" in source
 
 
 def test_task_status_exposes_redacted_checkpoint():

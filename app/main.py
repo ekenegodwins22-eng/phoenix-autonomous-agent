@@ -13,6 +13,7 @@ from app.providers import available_models
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
 from app.agent.task_manager import task_manager as task_store
+from app import checkpoint as checkpoint_format
 from app.agent.prompt_loader import InstructionConfigError, instruction_status
 from app.proxy import configured_proxy, public_status
 
@@ -37,6 +38,8 @@ def snapshot(item):
 @app.on_event('startup')
 async def recover_tasks_on_startup():
     for task_id in task_store.recover_interrupted():
+        asyncio.create_task(start_task(task_id))
+    for task_id in task_store.recover_waiting_on_restart():
         asyncio.create_task(start_task(task_id))
 
 @app.get("/", include_in_schema=False)
@@ -187,52 +190,146 @@ async def start_task(task_id: str):
         task_handles.pop(task_id, None)
 
 
+class _ActiveClock:
+    """Execution budget that excludes human-verification pauses.
+
+    The budget is consumed only while the agent is executing. Waiting for a
+    person does not count, so a slow human cannot time out the task.
+    The global execution lock is released for the duration of a pause and
+    re-acquired before execution continues.
+    """
+
+    def __init__(self, budget_seconds: float, lock: asyncio.Lock):
+        self.remaining = float(budget_seconds)
+        self.paused_since = None
+        self.lock = lock
+        self.held = False
+
+    async def acquire(self):
+        await self.lock.acquire()
+        self.held = True
+
+    def release(self):
+        if self.held:
+            self.held = False
+            self.lock.release()
+
+    async def pause(self):
+        self.paused_since = asyncio.get_running_loop().time()
+        self.release()
+
+    async def resume(self):
+        await self.acquire()
+        self.paused_since = None
+
+
 async def run_task(task_id: str):
     worker_token = f'{settings.phoenix_worker_id}:{id(asyncio.current_task())}'
-    if not task_store.claim_task(task_id, worker_token):
+    before = task_store.get_task(task_id)
+    if not before or not task_store.claim_task(task_id, worker_token):
         return
     item = task_store.get_task(task_id)
     if not item:
         return
+    was_recovering = before.get('status') == 'recovering'
     cancel_event = asyncio.Event()
     resume_event = asyncio.Event()
     task_cancel_events[task_id] = cancel_event
     task_resume_events[task_id] = resume_event
-    async with execution_lock:
+    budget = float(item.get('timeout_seconds') or settings.task_timeout_seconds)
+    clock = _ActiveClock(budget, execution_lock)
+    try:
+        resume_from = None
+        if was_recovering:
+            resume_from = _resume_state_or_fail(task_id, item)
+            if resume_from is None:
+                return
+        task_store.set_state(task_id, 'running', progress='Resuming from verified checkpoint.' if resume_from else 'Starting task execution.')
+        async def progress(message):
+            if task_store.is_cancel_requested(task_id):
+                cancel_event.set()
+            if cancel_event.is_set():
+                raise asyncio.CancelledError()
+            task_store.set_state(task_id, 'running', progress=message)
+        async def on_waiting_human(details):
+            challenge_type = str((details or {}).get('type') or 'human_verification')
+            methods = ', '.join(str(x) for x in ((details or {}).get('resolution_methods') or ['human_completion']))
+            task_store.set_state(task_id, 'waiting_human', progress=f'Paused: detected {challenge_type}.', human_help=f'Complete the detected {challenge_type} in the browser panel, then resume. Available methods: {methods}.', waiting_details=details)
+        async def get_user_messages():
+            return task_store.claim_unconsumed_user_messages(task_id)
+        async def save_checkpoint(checkpoint):
+            task_store.save_checkpoint(task_id, checkpoint)
+        request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct')
+        await clock.acquire()
         try:
-            task_store.set_state(task_id, 'running', progress='Starting task execution.')
-            async def progress(message):
-                if task_store.is_cancel_requested(task_id):
-                    cancel_event.set()
-                if cancel_event.is_set():
-                    raise asyncio.CancelledError()
-                task_store.set_state(task_id, 'running', progress=message)
-            async def on_waiting_human(details):
-                challenge_type = str((details or {}).get('type') or 'human_verification')
-                methods = ', '.join(str(x) for x in ((details or {}).get('resolution_methods') or ['human_completion']))
-                task_store.set_state(task_id, 'waiting_human', progress=f'Paused: detected {challenge_type}.', human_help=f'Complete the detected {challenge_type} in the browser panel, then resume. Available methods: {methods}.', waiting_details=details)
-            async def get_user_messages():
-                return task_store.claim_unconsumed_user_messages(task_id)
-            async def save_checkpoint(checkpoint):
-                task_store.save_checkpoint(task_id, checkpoint)
-            request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct')
-            result = await asyncio.wait_for(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode), timeout=request.timeout_seconds or settings.task_timeout_seconds)
-            task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
-        except asyncio.CancelledError:
-            task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
-        except HumanInterventionRequired as exc:
-            task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
-        except (TaskBlocked, TaskIncomplete) as exc:
-            task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=str(exc)[:400])
-        except InstructionConfigError as exc:
-            task_store.set_state(task_id, 'failed', progress='Agent instruction configuration could not be loaded.', error=str(exc)[:400])
-        except Exception as exc:
-            logging.exception('Task %s failed', task_id)
-            task_store.set_state(task_id, 'failed', progress='Task failed; see the error for details.', error=f'{type(exc).__name__}: {str(exc)[:400]}')
+            if task_store.is_cancel_requested(task_id):
+                raise asyncio.CancelledError()
+            # The global lock is held only while actively executing. It is released during a
+            # human pause (clock.pause) so other tasks are not blocked by a waiting person.
+            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume))
+            result = await _run_with_active_budget(execution, clock)
         finally:
-            task_store.release_worker(task_id)
-            task_cancel_events.pop(task_id, None)
-            task_resume_events.pop(task_id, None)
+            clock.release()
+        task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
+    except asyncio.CancelledError:
+        task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
+    except HumanInterventionRequired as exc:
+        task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
+    except TimeoutError:
+        task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=f'Execution time budget of {int(budget)}s was used; human pause time is not counted.')
+    except (TaskBlocked, TaskIncomplete) as exc:
+        task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=str(exc)[:400])
+    except InstructionConfigError as exc:
+        task_store.set_state(task_id, 'failed', progress='Agent instruction configuration could not be loaded.', error=str(exc)[:400])
+    except Exception as exc:
+        logging.exception('Task %s failed', task_id)
+        task_store.set_state(task_id, 'failed', progress='Task failed; see the error for details.', error=f'{type(exc).__name__}: {str(exc)[:400]}')
+    finally:
+        task_store.release_worker(task_id)
+        task_cancel_events.pop(task_id, None)
+        task_resume_events.pop(task_id, None)
+
+
+async def _run_with_active_budget(execution, clock: _ActiveClock):
+    """Run execution; cancel it once ACTIVE (non-paused) time exceeds the budget.
+
+    Only time spent executing counts. Time spent paused for a human is excluded
+    from the budget, so a slow human cannot time the task out.
+    """
+    loop = asyncio.get_running_loop()
+    active = 0.0
+    last = loop.time()
+    while True:
+        if execution.done():
+            return execution.result()
+        now = loop.time()
+        if clock.paused_since is None:
+            active += now - last
+        last = now
+        if active >= clock.remaining:
+            execution.cancel()
+            try:
+                await execution
+            except (asyncio.CancelledError, Exception):
+                pass
+            raise TimeoutError()
+        if clock.paused_since is not None:
+            await asyncio.sleep(0.05)
+        else:
+            await asyncio.wait({execution}, timeout=min(0.1, max(0.0, clock.remaining - active)))
+
+
+def _resume_state_or_fail(task_id: str, item: dict):
+    """Return the verified resume state, or mark the task failed/recoverable with a clear reason."""
+    status, state = checkpoint_format.decode(item.get('checkpoint'))
+    if status != 'ok':
+        task_store.set_state(task_id, 'failed', progress='Recovery blocked: no usable checkpoint.', error=f'Checkpoint {status}; execution was not replayed to avoid duplicate side effects.')
+        return None
+    allowed, reason = checkpoint_format.resume_decision(state)
+    if not allowed:
+        task_store.set_state(task_id, 'failed', progress='Recovery blocked: manual review required.', error=f'Not resumed: {reason}.')
+        return None
+    return state
 
 
 def _task_for_user(task_ref: str, user):

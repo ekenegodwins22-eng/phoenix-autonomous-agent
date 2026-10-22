@@ -10,6 +10,7 @@ from app.form_data import synthetic_profile, classify_field, constrained_value
 from app.agent.action_schema import ActionRequest
 from app.agent.prompt_loader import InstructionConfigError, build_effective_instructions
 from app.proxy import configured_proxy
+from app import checkpoint as checkpoint_format
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -265,12 +266,23 @@ async def _fill_form(page):
             errors.append({'field': field.get('label') or field.get('name') or selector, 'error': f'{type(exc).__name__}: {str(exc)[:160]}'})
     return {'fields_detected': len(fields), 'fields_filled': filled, 'fields_skipped': skipped, 'validation_or_interaction_errors': errors, 'synthetic_data': True, 'submitted': False}
 
-async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None, proxy_mode: str = 'direct'):
+def _checkpoint(step, phase, history, *, action=None, target=None, url=None, title=None, verified=False, proxy_mode=None, proxy=None, mailbox_context=None, mailbox_email_attempted=False, registration=None, challenge=None, error_type=None, generated=False, summary=None):
+    """Build the redacted checkpoint payload; persistence and redaction live in app.checkpoint."""
+    return {
+        'phase': phase, 'step': step, 'action': action, 'target': target, 'url': url, 'title': title,
+        'verified': verified, 'history': history, 'engine': 'phoenix',
+        'proxy_mode': proxy_mode, 'proxy_identifier': proxy.get('identifier') if proxy else None,
+        'mailbox_alias_id': (mailbox_context or {}).get('alias_id'), 'mailbox_email_attempted': mailbox_email_attempted,
+        'generated_credentials_used': generated, 'registration': registration, 'challenge': challenge,
+        'error_type': error_type, 'summary': summary,
+    }
+
+async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None, proxy_mode: str = 'direct', resume_from: dict | None = None, on_pause_started=None, on_pause_ended=None):
     if settings.execution_engine.lower() == 'browser_use':
         from app.browser_use_adapter import execute_browser_use_task
         result = await execute_browser_use_task(instruction, start_url, provider_choice, model, progress, cancel_event)
         if save_checkpoint:
-            await save_checkpoint({'engine': 'browser_use', 'verified': True, 'summary': 'Browser Use agent completed the configured task.'})
+            await save_checkpoint({'engine': 'browser_use', 'phase': 'done', 'verified': False, 'summary': 'Browser Use agent returned a result; outcome not independently verified by Phoenix.'})
         return result
     async def report(message):
         if progress:
@@ -287,6 +299,15 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
     generated_credentials = {}
     mailbox_context = {}
     mailbox_email_attempted = False
+    start_step = 1
+    if resume_from:
+        history = list(resume_from.get('history') or [])
+        start_step = int(resume_from.get('step') or 0) + 1
+        mailbox_email_attempted = bool(resume_from.get('mailbox_email_attempted'))
+        if resume_from.get('mailbox_alias_id'):
+            mailbox_context['alias_id'] = resume_from['mailbox_alias_id']
+        if resume_from.get('url') and not url:
+            url = resume_from['url']
     proxy = configured_proxy() if proxy_mode == 'configured' else None
     if proxy_mode == 'configured' and not proxy:
         raise TaskBlocked('Configured proxy requested but no protected proxy is available.')
@@ -294,11 +315,18 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
         raise TaskBlocked('Direct connection is disabled because this deployment requires a proxy.')
     async with browser.session(proxy=proxy) as page:
         browser.current_task_id = task_id
-        if url:
+        if resume_from and resume_from.get('url'):
+            # Revalidate the restored page before continuing: the page must load and be the expected origin.
+            await report(f"Restoring page {resume_from['url']} after restart")
+            await _browser_retry(lambda: page.goto(resume_from['url'], wait_until='domcontentloaded'))
+            if urlparse(page.url).netloc != urlparse(resume_from['url']).netloc:
+                raise TaskBlocked('Restored page moved to a different site; not resuming automatically.')
+            history.append({"tool":"resume_restore", "url":page.url, "result":"page restored after restart"})
+        elif url and not resume_from:
             await report(f"Opening {url}")
             await _browser_retry(lambda: page.goto(url, wait_until='domcontentloaded'))
             history.append({"tool":"goto", "url":page.url, "result":"navigation complete"})
-        for step in range(1, settings.max_agent_steps + 1):
+        for step in range(start_step, settings.max_agent_steps + 1):
             if cancel_event and cancel_event.is_set():
                 raise asyncio.CancelledError()
             if get_user_messages:
@@ -315,7 +343,15 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     await on_waiting_human(details)
                 if resume_event is None:
                     raise HumanInterventionRequired(json.dumps(details, ensure_ascii=False))
-                await resume_event.wait()
+                if save_checkpoint:
+                    await save_checkpoint(_checkpoint(step, 'challenge', history, url=page.url, challenge=details, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted))
+                if on_pause_started:
+                    await on_pause_started()
+                try:
+                    await resume_event.wait()
+                finally:
+                    if on_pause_ended:
+                        await on_pause_ended()
                 resume_event.clear()
                 await report("Resuming after human verification")
                 state = await _snapshot(page)
@@ -336,6 +372,9 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
             try:
                 if cancel_event and cancel_event.is_set():
                     raise asyncio.CancelledError()
+                if save_checkpoint and name in checkpoint_format.SIDE_EFFECT_ACTIONS:
+                    # Written before the side effect so an interruption mid-action is recorded as uncertain.
+                    await save_checkpoint(_checkpoint(step, 'pending', history, action=name, target=action.get('target'), url=page.url, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted, generated=bool(generated_credentials)))
                 if name == 'goto':
                     target_url = str(action.get('url',''))
                     if not valid_url(target_url): raise ValueError('goto requires a valid http/https URL')
@@ -403,7 +442,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     evidence = await _snapshot(page) if page.url else {'url': '', 'title': '', 'body': ''}
                     history.append({"action":"done","result":summary,"evidence":{"url":evidence.get('url'),"title":evidence.get('title'),"body_excerpt":evidence.get('body','')[:500]}})
                     if save_checkpoint:
-                        await save_checkpoint({'step': step, 'action': 'done', 'url': evidence.get('url'), 'title': evidence.get('title'), 'verified': True, 'proxy_mode': proxy_mode, 'proxy_identifier': proxy.get('identifier') if proxy else None})
+                        await save_checkpoint(_checkpoint(step, 'done', history, action='done', url=evidence.get('url'), title=evidence.get('title'), verified=False, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted, generated=bool(generated_credentials), summary=summary[:500]))
                     return _format_result(summary, history, used_providers, used_models)
                 else: raise ValueError(f"Unsupported action: {name}")
                 registration = None
@@ -414,12 +453,13 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                 # Never keep values typed into forms in task history.
                 history.append({"action":name,"target":action.get('target'),"result":result})
                 if save_checkpoint:
-                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url, 'proxy_mode': proxy_mode, 'proxy_identifier': proxy.get('identifier') if proxy else None, 'registration': registration})
+                    await save_checkpoint(_checkpoint(step, 'verified', history, action=name, target=action.get('target'), url=page.url, title=None, verified=True, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted, registration=registration, generated=bool(generated_credentials)))
                 await report(f"Verified action {step}: {name}")
             except Exception as exc:
                 history.append({"action":name,"target":action.get('target'),"error":f"{type(exc).__name__}: {str(exc)[:300]}"})
-                if save_checkpoint:
-                    await save_checkpoint({'step': step, 'action': name, 'target': action.get('target'), 'url': page.url, 'error_type': type(exc).__name__})
+                if save_checkpoint and name in checkpoint_format.SIDE_EFFECT_ACTIONS:
+                    # Outcome of a side effect is unknown after an error: keep it 'error' so restart inspects instead of replaying.
+                    await save_checkpoint(_checkpoint(step, 'error', history, action=name, target=action.get('target'), url=page.url, verified=False, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted, error_type=type(exc).__name__, generated=bool(generated_credentials)))
                 await report(f"Action {step} failed: {type(exc).__name__}")
     raise TaskIncomplete(f"Execution budget exhausted after {settings.max_agent_steps} actions before Phoenix could verify completion.")
 

@@ -95,7 +95,8 @@ def test_task_cancellation_is_server_side_and_restart_does_not_replay(monkeypatc
     assert recoverable['id'] in restart_queue
     assert task_store.get_task(queued['id'])['status'] == 'cancelled'
     assert task_store.get_task(active['id'])['status'] == 'failed'
-    assert 'not replayed' in task_store.get_task(active['id'])['error']
+    assert 'not resumed' in task_store.get_task(active['id'])['error']
+    assert 'checkpoint missing' in task_store.get_task(active['id'])['error']
 
 
 def test_task_chat_messages_persist_and_are_claimed_once(monkeypatch, tmp_path):
