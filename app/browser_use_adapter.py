@@ -143,6 +143,108 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
     return kwargs
 
 
+_REDACT_KEYS = ('text', 'value')
+
+
+def _step_actions(item) -> list[tuple[str, dict]]:
+    """Return (action_name, params) pairs the model chose in one history item."""
+    out: list[tuple[str, dict]] = []
+    model_output = getattr(item, 'model_output', None)
+    for act in (getattr(model_output, 'action', None) or []):
+        try:
+            data = act.model_dump(exclude_none=True, mode='json')
+        except Exception:
+            continue
+        if not data:
+            continue
+        name = next(iter(data))
+        params = data.get(name)
+        out.append((str(name), params if isinstance(params, dict) else ({} if params is None else {'value': params})))
+    return out
+
+
+def _redact_params(name: str, params: dict) -> dict:
+    """Never keep typed form values in the stored/displayed history."""
+    lowered = name.lower()
+    if any(word in lowered for word in ('input', 'type', 'fill')):
+        return {k: ('[redacted]' if k in _REDACT_KEYS else v) for k, v in params.items()}
+    return dict(params)
+
+
+def _last_error(item) -> str | None:
+    for result in (getattr(item, 'result', None) or []):
+        error = getattr(result, 'error', None)
+        if error:
+            return str(error).strip()[:400]
+    return None
+
+
+def summarize_history(history) -> dict:
+    """Turn browser-use's AgentHistoryList into Phoenix's action log, done flag and last error."""
+    items = list(getattr(history, 'history', None) or [])
+    actions: list[dict] = []
+    for index, item in enumerate(items, start=1):
+        for name, params in _step_actions(item):
+            target = params.get('index', params.get('url'))
+            actions.append({'step': index, 'action': name, 'target': None if target is None else str(target)[:300],
+                            'params': _redact_params(name, params)})
+    last_error = None
+    for item in items:
+        error = _last_error(item)
+        if error:
+            last_error = error
+    final = None
+    try:
+        final = history.final_result()
+    except Exception:
+        final = None
+    done = False
+    try:
+        done = bool(history.is_done())
+    except Exception:
+        done = False
+    return {'actions': actions, 'done': done, 'final': final, 'last_error': last_error, 'steps': len(items)}
+
+
+def _describe_step(agent) -> str:
+    """One console log line per step: the chosen actions, or the real error that step produced."""
+    n = getattr(getattr(agent, 'state', None), 'n_steps', '')
+    items = list(getattr(getattr(agent, 'history', None), 'history', None) or [])
+    if not items:
+        return f'Step {n}: no action recorded'
+    item = items[-1]
+    names = [name for name, _ in _step_actions(item)]
+    error = _last_error(item)
+    line = f"Step {n}: {', '.join(names) if names else 'no action chosen'}"
+    if error:
+        line += f' failed: {error[:200]}'
+    return line
+
+
+def _save_downloads(task_id: str | None, paths: list[str]) -> list[str]:
+    """Copy files the browser downloaded into the task's Files store so the console can offer them."""
+    if not task_id or not paths:
+        return []
+    import shutil
+    from app import task_store
+    from app.config import settings as cfg
+    item = task_store.get_task(task_id)
+    if not item:
+        return []
+    base = Path(cfg.database_path).resolve().parent / 'uploads' / item['id']
+    base.mkdir(parents=True, exist_ok=True)
+    saved: list[str] = []
+    for raw in paths:
+        src = Path(raw)
+        if not src.is_file():
+            continue
+        dest = base / f'download-{src.name}'
+        shutil.copyfile(src, dest)
+        task_store.add_file(task_id, item['owner_id'], dest.name, None, dest.stat().st_size, str(dest))
+        saved.append(dest.name)
+    return saved
+
+
 async def execute_browser_use_task(
     instruction: str,
     start_url: str | None = None,
@@ -191,7 +293,7 @@ async def execute_browser_use_task(
     async def on_step_end(agent):
         await capture(agent)
         if progress:
-            await progress(f'Browser Use verified step {getattr(agent.state, "n_steps", "")}'.strip())
+            await progress(_describe_step(agent))
 
     agent = Agent(
         task=task,
@@ -205,8 +307,22 @@ async def execute_browser_use_task(
     )
     try:
         history = await agent.run(max_steps=max_steps, on_step_start=on_step_start, on_step_end=on_step_end)
-        return json.dumps({'summary': history.final_result() or 'Browser Use task completed.',
-                           'engine': 'browser_use', 'verified': True}, ensure_ascii=False)
+        summary = summarize_history(history)
+        downloads = []
+        try:
+            downloads = _save_downloads(task_id, [str(p) for p in session.downloaded_files])
+        except Exception:
+            downloads = []
+        if not summary['done']:
+            # The agent stopped (step budget, repeated failures) without signalling done. Report that
+            # honestly instead of a success with a placeholder summary.
+            from app.runner import TaskIncomplete
+            reason = summary['last_error'] or f'the agent stopped after {summary["steps"]} steps without finishing'
+            raise TaskIncomplete(f'Browser Use did not reach a finished result: {reason}')
+        return json.dumps({'summary': summary['final'] or 'Browser Use task completed.',
+                           'engine': 'browser_use', 'verified': False,
+                           'actions': summary['actions'], 'steps': summary['steps'],
+                           'downloads': downloads}, ensure_ascii=False)
     finally:
         _latest_frames.pop(task_id, None) if task_id else None
         await session.stop()

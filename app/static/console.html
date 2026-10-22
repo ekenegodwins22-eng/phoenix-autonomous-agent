@@ -664,6 +664,19 @@ async function loadLogs(){
 function bubble(text){return '<div class="bubble">'+esc(text)+'</div>'}
 function agentBlock(text,kind){return '<div class="'+(kind==='sys'?'sys':'agent')+'">'+esc(text)+'</div>'}
 
+function resultHTML(raw){
+  let d=null;try{d=JSON.parse(raw)}catch(e){d=null}
+  if(!d||typeof d!=='object')return agentBlock(raw);
+  const acts=Array.isArray(d.actions)?d.actions:[];
+  let html=agentBlock(d.summary||'Task finished.');
+  if(acts.length){
+    html+='<div class="agent actions"><h4>Actions ('+acts.length+')</h4>'+acts.map(a=>
+      '<div class="log"><span class="ts">step '+esc(String(a.step))+'</span><span>'+esc(a.action)+(a.target?' '+esc(String(a.target)):'')+'</span></div>').join('')+'</div>';
+  }
+  if(Array.isArray(d.downloads)&&d.downloads.length)html+=agentBlock('Downloaded: '+d.downloads.join(', ')+' (see Files)');
+  return html;
+}
+
 function activityHTML(t){
   const s=secsOf(t);
   let txt;
@@ -710,7 +723,7 @@ function renderTask(){
     if(m.role==='user')parts.push(bubble(m.content));
     else parts.push(agentBlock(m.content,m.role==='system'?'sys':'agent'));
   });
-  if(t.result)parts.push(agentBlock(t.result));
+  if(t.result)parts.push(resultHTML(t.result));
   if(t.error)parts.push('<div class="err" style="align-self:flex-start">'+esc('Error: '+t.error)+'</div>');
   inner.innerHTML=parts.join('');
   if(nearBottom)thread.scrollTop=thread.scrollHeight;
