@@ -299,8 +299,16 @@ def _checkpoint(step, phase, history, *, action=None, target=None, url=None, tit
 
 async def execute_task(instruction, start_url=None, provider_choice="auto", model=None, progress: Callable[[str], Awaitable[None]] | None = None, on_waiting_human=None, resume_event=None, task_id=None, cancel_event=None, get_user_messages: Callable[[], Awaitable[list[dict]]] | None = None, save_checkpoint: Callable[[dict], Awaitable[None]] | None = None, proxy_mode: str = 'direct', resume_from: dict | None = None, on_pause_started=None, on_pause_ended=None):
     if settings.execution_engine.lower() == 'browser_use':
+        if start_url and not valid_url(start_url):
+            raise TaskBlocked('Invalid start URL: use http or https.')
         from app.browser_use_adapter import execute_browser_use_task
-        result = await execute_browser_use_task(instruction, start_url, provider_choice, model, progress, cancel_event)
+        url = start_url
+        if not url:
+            match = re.search(r"https?://[^\s)>\"\']+", instruction)
+            if match: url = match.group(0).rstrip('.,')
+        if url and not valid_url(url):
+            raise TaskBlocked('Invalid start URL: use http or https.')
+        result = await execute_browser_use_task(instruction, url, provider_choice, model, progress, cancel_event)
         if save_checkpoint:
             await save_checkpoint({'engine': 'browser_use', 'phase': 'done', 'verified': False, 'summary': 'Browser Use agent returned a result; outcome not independently verified by Phoenix.'})
         return result

@@ -54,7 +54,7 @@ services:
       - key: MAX_AGENT_STEPS
         value: "60"
       - key: EXECUTION_ENGINE
-        value: phoenix
+        value: browser_use
       - key: MODEL_ACTION_RETRIES
         value: "2"
       - key: BROWSER_RETRY_ATTEMPTS

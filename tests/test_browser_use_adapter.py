@@ -28,10 +28,10 @@ def test_runner_dispatches_to_browser_use_only_when_configured(monkeypatch):
     assert calls[1]['engine'] == 'browser_use'
 
 
-def test_phoenix_engine_remains_the_default():
+def test_vendored_browser_use_is_the_default_engine():
     from app.config import settings
 
-    assert settings.execution_engine == 'phoenix'
+    assert settings.execution_engine == 'browser_use'
 
 
 def test_phoenix_router_model_implements_browser_use_invoke_contract(monkeypatch):
@@ -42,7 +42,7 @@ def test_phoenix_router_model_implements_browser_use_invoke_contract(monkeypatch
 
     async def fake_chat(messages, provider, model):
         seen.append((messages, provider, model))
-        return 'browser-use response'
+        return 'browser-use response', 'primary', model
 
     monkeypatch.setattr(browser_use_adapter, 'chat', fake_chat)
     model = browser_use_adapter.PhoenixRouterChatModel(provider='primary', model='test-model')
@@ -50,3 +50,57 @@ def test_phoenix_router_model_implements_browser_use_invoke_contract(monkeypatch
 
     assert completion.completion == 'browser-use response'
     assert seen == [([{'role': 'user', 'content': 'Inspect the page'}], 'primary', 'test-model')]
+
+
+def test_vendored_browser_use_is_the_engine_on_path():
+    from app import browser_use_adapter
+    import browser_use
+
+    vendor = str(browser_use_adapter.VENDOR_DIR)
+    assert browser_use.__file__.startswith(vendor)
+    assert (browser_use_adapter.VENDOR_DIR / 'LICENSE').read_text().startswith('MIT License')
+
+
+def test_vendored_agent_and_session_import():
+    from browser_use import Agent, BrowserSession
+    import inspect
+
+    params = inspect.signature(Agent.__init__).parameters
+    assert 'extend_system_message' in params
+    assert 'register_should_stop_callback' in params
+    assert BrowserSession is not None
+
+
+def test_phoenix_router_model_satisfies_browser_use_llm_protocol(monkeypatch):
+    from types import SimpleNamespace
+    from app import browser_use_adapter
+    from pydantic import BaseModel
+
+    async def fake_chat(messages, provider, model):
+        return '{"ok": true}', 'primary', model
+
+    class Out(BaseModel):
+        ok: bool
+
+    monkeypatch.setattr(browser_use_adapter, 'chat', fake_chat)
+    model = browser_use_adapter.PhoenixRouterChatModel(model='m1')
+    assert model.provider == 'phoenix'
+    assert model.model_name == 'm1' and model.model == 'm1'
+    completion = asyncio.run(model.ainvoke([SimpleNamespace(role='user', content='hi')], Out))
+    assert completion.completion.ok is True
+
+
+def test_agent_md_is_injected_into_engine_system_message():
+    from app import browser_use_adapter
+    from app.agent.prompt_loader import AGENT_PATH
+
+    injected = browser_use_adapter.phoenix_agent_instructions()
+    assert '# AUTHORITATIVE AGENT.md' in injected
+    assert AGENT_PATH.read_text(encoding='utf-8').strip().splitlines()[0] in injected
+
+
+def test_engine_does_not_use_browser_use_cloud(monkeypatch):
+    import os
+    from app import browser_use_adapter  # noqa: F401
+    assert os.environ.get('ANONYMIZED_TELEMETRY') == 'false'
+    assert os.environ.get('BROWSER_USE_CLOUD_SYNC') == 'false'

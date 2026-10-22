@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     max_task_recovery_attempts: int = 2
     task_timeout_seconds: int = 900
     max_agent_steps: int = 60
-    execution_engine: str = "phoenix"
+    execution_engine: str = "browser_use"
     model_action_retries: int = 2
     browser_headless: bool = True
     browser_navigation_timeout_ms: int = 30000

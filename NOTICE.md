@@ -13,3 +13,10 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+## Vendored browser-use engine
+
+`vendor/browser_use_upstream/` contains the complete browser-use Python package source from the upstream repository, tag 0.13.13 (commit 129853546ff9cc169977d38b6038f9c4a4e734db), copied unmodified. Its MIT LICENSE is at `vendor/browser_use_upstream/LICENSE`, and the upstream pyproject is kept beside it. Copyright (c) 2024 Gregor Zunic and browser-use contributors. Source: https://github.com/browser-use/browser-use
+
+The only Phoenix change to the engine's behavior is the LLM layer: `app/browser_use_adapter.py` supplies `PhoenixRouterChatModel`, which routes calls through Phoenix's own provider stack (app/providers.py) and Phoenix's proxy settings. Phoenix's AGENT.md is passed as the agent's system extension. No browser-use cloud service or API key is used.
