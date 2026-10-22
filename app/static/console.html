@@ -436,7 +436,10 @@ label.lab:first-child{margin-top:0}
 <script>
 (function(){
 'use strict';
-const KEY='phoenix_token';
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]})}
+var KEY='phoenix_token';
+var selectedRef=null;
 const EP={messages:'/messages',logs:'/logs',resume:'/resume',shot:'/screenshot',uploads:'/uploads',artifacts:'/artifacts',summary:'/summary'};
 async function uploadFiles(ref,files){
   for(const f of files){
@@ -458,7 +461,6 @@ const RUN=['queued','running','recovering','waiting_human'];
 const DONE=['completed','failed','cancelled'];
 let token=localStorage.getItem(KEY)||'';
 let authMode='login';
-let selectedRef=null;
 let tasks=[];
 let detail=null;
 let msgs=[];
@@ -468,8 +470,6 @@ let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
 const cfg={model:'auto|',effort:'',fast:false,deep:false};
-const $=id=>document.getElementById(id);
-const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 async function api(path,opts={}){
   const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
