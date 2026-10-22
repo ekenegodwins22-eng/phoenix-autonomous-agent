@@ -46,6 +46,11 @@ async def recover_tasks_on_startup():
 async def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html", headers={'Cache-Control': 'no-cache'})
 
+@app.get("/console", include_in_schema=False)
+async def console():
+    """Dashboard UI (static, no build step). Calls the existing REST API with a bearer token."""
+    return FileResponse(Path(__file__).parent / "static" / "console.html", headers={'Cache-Control': 'no-cache'})
+
 @app.get("/health")
 async def health():
     installation, resources = await asyncio.gather(asyncio.to_thread(browser_installation_status, verify_launch=False), asyncio.to_thread(resource_status))

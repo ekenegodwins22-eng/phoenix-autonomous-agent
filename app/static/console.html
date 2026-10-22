@@ -1,0 +1,489 @@
+<!doctype html>
+<!--
+  Phoenix Console: a dashboard UI for the Phoenix Autonomous Agent.
+
+  Layout and visual patterns (left task sidebar, dense task list with status
+  pills, task detail pane with progress, logs and live browser view) are
+  adapted from the browser-use project's dashboard style.
+  browser-use: https://github.com/browser-use/browser-use
+  Copyright (c) browser-use contributors. Licensed under the MIT License.
+  No browser-use source code is copied here; only design patterns are adapted.
+  See NOTICE.md at the repository root for the full MIT notice.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0b0c">
+<title>Phoenix Console</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0b0c;--panel:#131315;--panel-2:#1a1a1d;--line:#26262b;--text:#ececef;--muted:#9a9aa3;--soft:#6b6b75;--accent:#ff8a4c;--accent-2:#f46d3e;--ok:#7bd88f;--warn:#f5c15c;--bad:#ff6b6b;--run:#7aa7ff;--radius:12px}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+.hidden{display:none!important}
+.app{display:grid;grid-template-columns:300px 1fr;height:100vh}
+.sidebar{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.brand{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line);font-weight:650}
+.brand small{display:block;color:var(--muted);font-weight:450;font-size:12px}
+.mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(145deg,var(--accent),var(--accent-2));display:grid;place-items:center;color:#111;font-weight:800}
+.side-actions{padding:14px 16px;display:grid;gap:8px;border-bottom:1px solid var(--line)}
+.btn{border:1px solid var(--line);background:var(--panel-2);border-radius:9px;padding:9px 13px;transition:background .15s}
+.btn:hover{background:#24242a}
+.btn.primary{background:linear-gradient(145deg,var(--accent),var(--accent-2));color:#111;border:0;font-weight:650}
+.btn.danger{color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.small{padding:5px 10px;font-size:12px}
+.task-list{overflow:auto;flex:1;padding:8px}
+.task-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:10px;padding:10px 11px;margin-bottom:4px}
+.task-item:hover{background:var(--panel-2)}
+.task-item.active{background:var(--panel-2);border-color:var(--line)}
+.task-item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
+.task-item .m{color:var(--muted);font-size:12px;display:flex;gap:8px;align-items:center;margin-top:3px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:11px;font-weight:650;border:1px solid var(--line);background:#1d1d22;color:var(--muted);text-transform:capitalize;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.queued{color:var(--muted)}
+.pill.running,.pill.recovering{color:var(--run)}
+.pill.waiting_human{color:var(--warn);border-color:#5c4a1c}
+.pill.completed{color:var(--ok)}
+.pill.failed,.pill.cancelled{color:var(--bad)}
+.main{overflow:auto;min-width:0}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 26px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,11,12,.92);backdrop-filter:blur(8px);z-index:2}
+.topbar h2{margin:0;font-size:16px}
+.tabs{display:flex;gap:4px}
+.tab{background:transparent;border:1px solid transparent;border-radius:8px;padding:7px 12px;color:var(--muted)}
+.tab.on{background:var(--panel-2);border-color:var(--line);color:var(--text)}
+.content{padding:24px 26px 60px;max-width:1100px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+.card h3{margin:0 0 10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:650}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:6px 14px;font-size:13px}
+.kv div:nth-child(odd){color:var(--muted)}
+.kv div{overflow-wrap:anywhere}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+textarea,input,select{width:100%;background:#0e0e10;border:1px solid var(--line);border-radius:9px;padding:10px 11px;outline:none}
+textarea:focus,input:focus,select:focus{border-color:#4a4a55}
+textarea{min-height:110px;resize:vertical}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.progress{height:6px;background:#1e1e23;border-radius:99px;overflow:hidden;margin:8px 0}
+.progress span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));width:0;transition:width .4s}
+.progress.indet span{width:35%;animation:slide 1.4s ease-in-out infinite alternate}
+@keyframes slide{from{margin-left:0}to{margin-left:65%}}
+.banner{border:1px solid #5c4a1c;background:#241d0c;color:#f5dfa6;border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.banner strong{display:block;margin-bottom:4px}
+.logs{background:#0a0a0b;border:1px solid var(--line);border-radius:10px;max-height:340px;overflow:auto;padding:10px 12px}
+.log{display:grid;grid-template-columns:150px 58px 1fr;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px dashed #1c1c20}
+.log .lv{color:var(--soft);text-transform:uppercase}
+.log .lv.error{color:var(--bad)}
+.log .lv.warning{color:var(--warn)}
+.log .ts{color:var(--soft)}
+.shot{width:100%;border-radius:10px;border:1px solid var(--line);background:#000}
+.empty{color:var(--muted);text-align:center;padding:50px 20px}
+.err{color:var(--bad);font-size:13px;min-height:18px}
+.ok{color:var(--ok);font-size:13px}
+.auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:10}
+.auth form{width:min(380px,calc(100% - 32px));background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px}
+.auth h1{margin:0 0 4px;font-size:20px}
+.auth p{color:var(--muted);margin:0 0 14px;font-size:13px}
+.auth .btn{width:100%;margin-top:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--muted)}
+.chip.on{color:var(--text);border-color:#4a4a55}
+@media(max-width:860px){.app{grid-template-columns:1fr;height:auto}.sidebar{max-height:45vh}.grid2{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}.log{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="auth" class="auth hidden">
+  <form id="authForm">
+    <div class="brand" style="border:0;padding:0 0 14px"><span class="mark">P</span><span>Phoenix<small>Autonomous Agent console</small></span></div>
+    <h1 id="authTitle">Sign in</h1>
+    <p>Use the same account as the main Phoenix workspace.</p>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" minlength="8" required>
+    <div class="err" id="authErr"></div>
+    <button class="btn primary" id="authBtn" type="submit">Sign in</button>
+    <button class="btn" id="authSwitch" type="button" style="margin-top:8px">Create an account instead</button>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><span class="mark">P</span><span>Phoenix<small>Browser agent console</small></span></div>
+    <div class="side-actions">
+      <button class="btn primary" id="newTaskBtn">+ New task</button>
+      <button class="btn" id="refreshBtn">Refresh</button>
+      <button class="btn small" id="logoutBtn" style="justify-self:start;border:0;background:none;color:var(--muted)">Sign out</button>
+    </div>
+    <div class="task-list" id="taskList"><div class="empty">Loading tasks…</div></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <h2 id="pageTitle">Tasks</h2>
+      <div class="tabs">
+        <button class="tab on" data-view="detail" id="tabDetail">Task</button>
+        <button class="tab" data-view="settings" id="tabSettings">Models &amp; proxy</button>
+      </div>
+    </div>
+
+    <section class="content hidden" id="viewCreate">
+      <div class="card">
+        <h3>New browser task</h3>
+        <label for="instruction">What should Phoenix do?</label>
+        <textarea id="instruction" placeholder="e.g. Go to example.com, find the pricing page and summarise the plans."></textarea>
+        <div class="grid2">
+          <div>
+            <label for="startUrl">Start URL (optional)</label>
+            <input id="startUrl" placeholder="https://">
+          </div>
+          <div>
+            <label for="timeout">Timeout seconds (optional)</label>
+            <input id="timeout" type="number" min="10" max="3600" placeholder="server default">
+          </div>
+          <div>
+            <label for="provider">Provider</label>
+            <select id="provider">
+              <option value="auto">Automatic (primary, then fallback)</option>
+              <option value="primary">Phoenix AI</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </div>
+          <div>
+            <label for="model">Model</label>
+            <select id="model"><option value="">Loading models…</option></select>
+          </div>
+          <div>
+            <label for="proxyMode">Proxy</label>
+            <select id="proxyMode">
+              <option value="direct">Direct connection</option>
+              <option value="configured">Configured protected proxy</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" id="createBtn">Start task</button>
+          <button class="btn" id="cancelCreateBtn">Cancel</button>
+          <span class="err" id="createErr"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="content hidden" id="viewDetail">
+      <div class="empty" id="emptyDetail">Select a task on the left, or start a new one.</div>
+      <div id="detail" class="hidden">
+        <div id="pauseBanner" class="banner hidden">
+          <strong>Human verification needed</strong>
+          <span id="pauseText">Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.</span>
+          <div class="row" style="margin-top:10px">
+            <button class="btn primary small" id="resumeBtn">I've completed verification, resume</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <div id="dTitle" style="font-weight:650;font-size:16px"></div>
+              <div class="mono" id="dSlug" style="color:var(--muted)"></div>
+            </div>
+            <span id="dStatus" class="pill">queued</span>
+          </div>
+          <div class="progress" id="dBar"><span></span></div>
+          <div id="dProgress" style="color:var(--muted)"></div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn small" id="cancelBtn">Cancel task</button>
+            <button class="btn small" id="retryBtn">Retry</button>
+          </div>
+          <div class="err" id="dErr" style="margin-top:8px"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <h3>Details</h3>
+            <div class="kv" id="dKv"></div>
+          </div>
+          <div class="card">
+            <h3>Checkpoint &amp; resume</h3>
+            <div class="kv" id="cKv"></div>
+          </div>
+        </div>
+
+        <div class="card" id="resultCard">
+          <h3>Result</h3>
+          <div id="dResult" style="white-space:pre-wrap"></div>
+        </div>
+
+        <div class="card" id="browserCard">
+          <h3>Remote browser</h3>
+          <img id="shot" class="shot hidden" alt="Remote browser screenshot">
+          <div class="row" style="margin-top:8px">
+            <button class="btn small" id="shotBtn">Refresh view</button>
+            <span id="shotMsg" style="color:var(--muted);font-size:12px"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Logs</h3>
+          <div class="logs" id="logs"><div class="empty" style="padding:14px">No logs yet.</div></div>
+        </div>
+
+        <div class="card">
+          <h3>Messages to this task</h3>
+          <textarea id="composer" placeholder="Send a note Phoenix will read on its next step"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button class="btn small" id="sendMsgBtn">Send message</button>
+            <span id="msgStatus" style="color:var(--muted);font-size:12px"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="content hidden" id="viewSettings">
+      <div class="grid2">
+        <div class="card">
+          <h3>Models</h3>
+          <div id="modelsInfo" style="color:var(--muted)">Loading…</div>
+        </div>
+        <div class="card">
+          <h3>Proxy</h3>
+          <div class="kv" id="proxyKv"></div>
+        </div>
+        <div class="card">
+          <h3>Runtime</h3>
+          <div class="kv" id="runtimeKv"></div>
+        </div>
+        <div class="card">
+          <h3>Agent instructions</h3>
+          <div class="kv" id="instrKv"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function(){
+'use strict';
+const KEY='phoenix_token';
+let token=localStorage.getItem(KEY)||'';
+let authMode='login';
+let selectedRef=null;
+let tasks=[];
+let detailTimer=null,listTimer=null;
+let detailBusy=false,listBusy=false;
+let shotUrl=null;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function api(path,opts={}){
+  const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
+  if(token)headers['Authorization']='Bearer '+token;
+  const r=await fetch(path,Object.assign({},opts,{headers}));
+  let d;try{d=await r.json()}catch(e){d={detail:'HTTP '+r.status}}
+  if(r.status===401){logout(true);throw new Error('Session expired. Sign in again.')}
+  if(!r.ok){const msg=typeof d.detail==='string'?d.detail:(Array.isArray(d.detail)?d.detail.map(x=>x.msg).join('; '):'Request failed');throw new Error(msg)}
+  return d;
+}
+
+function fmtTime(iso){if(!iso)return '';const d=new Date(iso);return isNaN(d)?iso:d.toLocaleString()}
+function ago(iso){if(!iso)return '';const s=Math.max(0,(Date.now()-new Date(iso))/1000);if(s<60)return Math.floor(s)+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
+function label(s){return String(s||'').replace(/_/g,' ')}
+
+function showAuth(){$('auth').classList.remove('hidden');$('app').classList.add('hidden')}
+function showApp(){$('auth').classList.add('hidden');$('app').classList.remove('hidden')}
+function logout(silent){token='';localStorage.removeItem(KEY);stopTimers();selectedRef=null;showAuth();if(silent)$('authErr').textContent='Session expired. Sign in again.'}
+function stopTimers(){clearTimeout(detailTimer);clearTimeout(listTimer)}
+
+$('authSwitch').onclick=()=>{authMode=authMode==='login'?'register':'login';$('authTitle').textContent=authMode==='login'?'Sign in':'Create account';$('authBtn').textContent=authMode==='login'?'Sign in':'Create account';$('authSwitch').textContent=authMode==='login'?'Create an account instead':'Sign in instead';$('authErr').textContent=''};
+$('authForm').onsubmit=async e=>{
+  e.preventDefault();$('authErr').textContent='';$('authBtn').disabled=true;
+  try{
+    const body=JSON.stringify({email:$('email').value.trim(),password:$('password').value});
+    if(authMode==='register'){await api('/auth/register',{method:'POST',body})}
+    const d=await api('/auth/login',{method:'POST',body});
+    token=d.access_token;localStorage.setItem(KEY,token);
+    $('password').value='';
+    startApp();
+  }catch(err){$('authErr').textContent=err.message}
+  finally{$('authBtn').disabled=false}
+};
+
+$('logoutBtn').onclick=()=>logout(false);
+$('refreshBtn').onclick=()=>{loadTasks();if(selectedRef)loadDetail()};
+$('newTaskBtn').onclick=()=>{selectedRef=null;renderList();showView('create')};
+$('cancelCreateBtn').onclick=()=>showView(selectedRef?'detail':'detail');
+$('tabDetail').onclick=()=>showView('detail');
+$('tabSettings').onclick=()=>{showView('settings');loadSettings()};
+
+function showView(name){
+  ['viewCreate','viewDetail','viewSettings'].forEach(id=>$(id).classList.add('hidden'));
+  $('tabDetail').classList.toggle('on',name==='detail'||name==='create');
+  $('tabSettings').classList.toggle('on',name==='settings');
+  if(name==='create'){$('viewCreate').classList.remove('hidden');$('pageTitle').textContent='New task'}
+  else if(name==='settings'){$('viewSettings').classList.remove('hidden');$('pageTitle').textContent='Models & proxy'}
+  else{$('viewDetail').classList.remove('hidden');$('pageTitle').textContent=selectedRef?'Task':'Tasks';if(!selectedRef){$('emptyDetail').classList.remove('hidden');$('detail').classList.add('hidden')}}
+}
+
+function renderList(){
+  if(!tasks.length){$('taskList').innerHTML='<div class="empty">No tasks yet. Start one with New task.</div>';return}
+  $('taskList').innerHTML=tasks.map(t=>{
+    const active=t.id===selectedRef||t.slug===selectedRef?' active':'';
+    return '<button class="task-item'+active+'" data-ref="'+esc(t.slug||t.id)+'">'+
+      '<div class="t">'+esc(t.instruction)+'</div>'+
+      '<div class="m"><span class="pill '+esc(t.status)+'">'+esc(label(t.status))+'</span><span>'+esc(ago(t.updated_at))+'</span></div></button>';
+  }).join('');
+  document.querySelectorAll('.task-item').forEach(b=>b.onclick=()=>openTask(b.dataset.ref));
+}
+
+async function loadTasks(){
+  if(!token||listBusy)return;listBusy=true;
+  try{tasks=await api('/tasks');renderList()}
+  catch(err){$('taskList').innerHTML='<div class="empty">'+esc(err.message)+'</div>'}
+  finally{listBusy=false;clearTimeout(listTimer);listTimer=setTimeout(loadTasks,5000)}
+}
+
+function openTask(ref){selectedRef=ref;showView('detail');renderList();loadDetail();}
+
+async function loadDetail(){
+  if(!selectedRef||detailBusy)return;detailBusy=true;
+  try{
+    const t=await api('/tasks/'+encodeURIComponent(selectedRef));
+    renderDetail(t);
+  }catch(err){$('dErr').textContent=err.message}
+  finally{detailBusy=false;clearTimeout(detailTimer);
+    if(selectedRef)detailTimer=setTimeout(loadDetail,3000)}
+}
+
+function renderDetail(t){
+  $('emptyDetail').classList.add('hidden');$('detail').classList.remove('hidden');
+  $('dTitle').textContent=t.instruction;
+  $('dSlug').textContent=t.slug||t.id;
+  const st=$('dStatus');st.className='pill '+t.status;st.textContent=label(t.status);
+  const running=['queued','running','recovering','waiting_human'].includes(t.status);
+  const bar=$('dBar');bar.classList.toggle('indet',running&&t.status!=='waiting_human');
+  bar.firstElementChild.style.width=t.status==='completed'?'100%':(t.status==='waiting_human'?'60%':'');
+  $('dProgress').textContent=t.progress||(running?'Waiting for the agent…':'');
+  $('dErr').textContent=t.error?('Error: '+t.error):'';
+  $('cancelBtn').disabled=!running||t.cancel_requested;
+  $('cancelBtn').textContent=t.cancel_requested?'Cancelling…':'Cancel task';
+  $('retryBtn').disabled=!(t.status==='failed'||t.status==='cancelled');
+  const paused=t.status==='waiting_human';
+  $('pauseBanner').classList.toggle('hidden',!paused);
+  if(paused){$('pauseText').textContent=(t.human_help||'Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.')}
+  $('resumeBtn').disabled=!paused;
+  $('dKv').innerHTML=[
+    ['Task ID',t.id],['Created',fmtTime(t.created_at)],['Updated',fmtTime(t.updated_at)],
+    ['Provider',t.provider||'auto'],['Model',t.model||'default'],['Proxy',t.proxy_mode==='configured'?'configured ('+(t.proxy_identifier||'')+')':'direct'],
+    ['Recovery count',String(t.recovery_count||0)],
+  ].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
+  const cp=t.checkpoint;
+  $('cKv').innerHTML=[
+    ['State',t.status==='waiting_human'?'paused, waiting for human':(running?'active':'idle')],
+    ['Checkpoint',cp?'saved':'none'],
+    ['Recoveries',String(t.recovery_count||0)],
+    ['Waiting details',t.waiting_details?JSON.stringify(t.waiting_details):'none'],
+  ].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
+  $('dResult').textContent=t.result||(t.status==='completed'?'(no result text)':'No result yet.');
+  $('resultCard').classList.toggle('hidden',!t.result&&!['completed','failed','cancelled'].includes(t.status));
+  $('browserCard').classList.toggle('hidden',!paused&&!$('shot').src);
+  if(paused&&!$('shot').src)refreshShot();
+  loadLogs();
+}
+
+async function loadLogs(){
+  if(!selectedRef)return;
+  try{
+    const d=await api('/tasks/'+encodeURIComponent(selectedRef)+'/logs');
+    const logs=d.logs||[];
+    $('logs').innerHTML=logs.length?logs.slice().reverse().map(l=>'<div class="log"><span class="ts">'+esc(fmtTime(l.created_at))+'</span><span class="lv '+esc(l.level)+'">'+esc(l.level)+'</span><span>'+esc(l.message)+'</span></div>').join(''):'<div class="empty" style="padding:14px">No logs yet.</div>';
+  }catch(err){$('logs').innerHTML='<div class="err">'+esc(err.message)+'</div>'}
+}
+
+async function refreshShot(){
+  if(!selectedRef)return;
+  try{
+    const r=await fetch('/tasks/'+encodeURIComponent(selectedRef)+'/screenshot',{headers:{'Authorization':'Bearer '+token},cache:'no-store'});
+    if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||'Browser view unavailable')}
+    const blob=await r.blob();if(shotUrl)URL.revokeObjectURL(shotUrl);shotUrl=URL.createObjectURL(blob);
+    $('shot').src=shotUrl;$('shot').classList.remove('hidden');$('shotMsg').textContent='Refreshed.';
+  }catch(err){$('shot').classList.add('hidden');$('shotMsg').textContent=err.message}
+}
+$('shotBtn').onclick=refreshShot;
+
+async function action(kind){
+  if(!selectedRef)return;
+  try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/'+kind,{method:'POST'});await loadDetail();await loadTasks()}
+  catch(err){$('dErr').textContent=err.message}
+}
+$('resumeBtn').onclick=async()=>{
+  $('resumeBtn').disabled=true;
+  try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/resume',{method:'POST'});$('pauseText').textContent='Resume sent. Phoenix is continuing.';await loadDetail()}
+  catch(err){$('pauseText').textContent=err.message;$('resumeBtn').disabled=false}
+};
+$('cancelBtn').onclick=()=>action('cancel');
+$('retryBtn').onclick=()=>action('retry');
+
+$('sendMsgBtn').onclick=async()=>{
+  const c=$('composer').value.trim();if(!c||!selectedRef)return;
+  $('sendMsgBtn').disabled=true;
+  try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/messages',{method:'POST',body:JSON.stringify({content:c})});$('composer').value='';$('msgStatus').textContent='Message saved.'}
+  catch(err){$('msgStatus').textContent=err.message}
+  finally{$('sendMsgBtn').disabled=false}
+};
+
+async function loadModelsAndProxy(){
+  try{
+    const models=await api('/models');
+    const list=Array.isArray(models)?models:(models.models||[]);
+    const ids=list.map(m=>typeof m==='string'?m:(m.id||m.name||'')).filter(Boolean);
+    $('model').innerHTML='<option value="">Default model</option>'+ids.map(id=>'<option value="'+esc(id)+'">'+esc(id)+'</option>').join('');
+    $('modelsInfo').innerHTML=ids.length?'<div class="chips">'+ids.map(id=>'<span class="chip">'+esc(id)+'</span>').join('')+'</div>':'No models returned by the server.';
+  }catch(err){$('model').innerHTML='<option value="">Default model (catalog unavailable)</option>';$('modelsInfo').textContent=err.message}
+  try{
+    const p=await api('/proxy/status');
+    $('proxyKv').innerHTML=[['Mode',p.mode],['Configured',p.configured?'yes':'no'],['Identifier',p.identifier||'none'],['Credentials',p.credentials_configured?'set':'not set']].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
+  }catch(err){$('proxyKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
+}
+
+async function loadSettings(){
+  try{
+    const r=await api('/runtime/status');
+    const b=r.browser||{};const res=r.resources||{};
+    $('runtimeKv').innerHTML=[['Browser',b.available===false?'unavailable':'available'],['Disk',res.disk?JSON.stringify(res.disk):'n/a'],['Memory',res.memory?JSON.stringify(res.memory):'n/a'],['Browser processes',String(res.browser_processes??'n/a')]].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
+    const ins=r.agent_instructions||{};
+    $('instrKv').innerHTML=Object.keys(ins).slice(0,12).map(k=>'<div>'+esc(k)+'</div><div>'+esc(typeof ins[k]==='object'?JSON.stringify(ins[k]):ins[k])+'</div>').join('')||'<div>none</div>';
+  }catch(err){$('runtimeKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
+}
+
+$('createBtn').onclick=async()=>{
+  $('createErr').textContent='';
+  const instruction=$('instruction').value.trim();
+  if(instruction.length<3){$('createErr').textContent='Describe the task (at least 3 characters).';return}
+  const body={instruction,provider:$('provider').value,proxy_mode:$('proxyMode').value};
+  const su=$('startUrl').value.trim();if(su)body.start_url=su;
+  const to=$('timeout').value.trim();if(to)body.timeout_seconds=Number(to);
+  const m=$('model').value;if(m)body.model=m;
+  $('createBtn').disabled=true;
+  try{
+    const t=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
+    $('instruction').value='';$('startUrl').value='';$('timeout').value='';
+    await loadTasks();
+    openTask(t.slug||t.id);
+  }catch(err){$('createErr').textContent=err.message}
+  finally{$('createBtn').disabled=false}
+};
+
+function startApp(){
+  showApp();showView('detail');
+  loadTasks();loadModelsAndProxy();
+  if(selectedRef)loadDetail();
+}
+
+if(token){startApp()}else{showAuth()}
+})();
+</script>
+</body>
+</html>
