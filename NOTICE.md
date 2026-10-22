@@ -1,6 +1,6 @@
 # Third-party notices
 
-The Phoenix Console (`app/static/console.html`) adapts layout and visual tokens from the browser-use project's public site and dashboard styling: near-black canvas, zinc text ramp, orange primary action (#fe750e) with dark label, pill buttons and status pills, 0.5rem radius, Geist sans/mono type. No browser-use source code is copied into this repository; only values and patterns are adapted.
+The Phoenix Console (`app/static/console.html`) adapts its layout and visual patterns from the browser-use cloud dashboard: a minimal top bar, a centered prompt card with paperclip, settings, model and effort selectors, lightning and a circular submit button, a task title bar with Share and Files, a chat thread with a "Worked for Xs" activity line, and a persistent bottom composer. No browser-use source code is copied into this repository; only layout and patterns are adapted. The model and proxy configuration is Phoenix's own, served by this server.
 
 browser-use
 https://github.com/browser-use/browser-use

@@ -1,116 +1,172 @@
 <!doctype html>
 <!--
-  Phoenix Console: a dashboard UI for the Phoenix Autonomous Agent.
+  Phoenix Console: the browser task UI for the Phoenix Autonomous Agent.
 
-  Layout and visual tokens (near-black canvas, zinc text ramp, #fe750e primary
-  action with black label, pill buttons and pills, 0.5rem card radius, Geist type)
-  are adapted from the browser-use project's public site styling.
+  Layout and components follow the browser-use cloud dashboard: a minimal top bar
+  (sidebar toggle, balance pill, key button), a centered home composer (breadcrumb,
+  title with logo glyph, one rounded prompt card with paperclip, settings sliders,
+  model and effort selectors, lightning, circular submit), a task view with a
+  title bar (Share, Files), a chat thread (right-aligned dark user bubbles, a
+  "Worked for Xs" activity line that expands to checkpoint and logs), and a
+  persistent bottom composer.
+
+  The AI/model configuration is Phoenix's own: it comes from this server's /models
+  endpoint and the proxy/runtime settings, not from browser-use's model catalog.
   browser-use: https://github.com/browser-use/browser-use
   Copyright (c) browser-use contributors. Licensed under the MIT License.
-  No browser-use source code is copied here; only design patterns are adapted.
   See NOTICE.md at the repository root for the full MIT notice.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#0a0a0a">
 <title>Phoenix Console</title>
 <style>
-:root{color-scheme:dark;--bg:#000000;--surface-0:#000000;--surface-1:#0a0a0a;--surface-2:#171717;--surface-3:#222222;--line:#262626;--line-strong:#3d3d3d;--copy-strong:#fafafa;--copy-body:#e4e4e7;--copy-secondary:#a1a1a1;--copy-muted:#737373;--pumpkin:#fe750e;--pumpkin-hover:#fe8f3c;--pumpkin-soft:#ffa969;--pumpkin-deep:#512704;--ok:#10b981;--warn:#fe8f3c;--bad:#ef4444;--run:#fe750e;--radius:0.5rem;--font-sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:root{color-scheme:dark;--bg:#0a0a0a;--bar:#0d0d0d;--surface:#161616;--surface-2:#1f1f20;--surface-3:#262626;--line:#262626;--line-2:#333;--copy:#ececec;--copy-2:#a3a3a3;--copy-3:#7a7a7a;--orange:#5a3a2c;--orange-glow:rgba(254,117,14,.18);--pumpkin:#fe750e;--ok:#10b981;--bad:#f87171;--sans:Geist,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--copy-body);font-family:var(--font-sans);font-size:14px;line-height:20px;letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
-button,input,textarea,select{font:inherit;color:inherit;letter-spacing:inherit}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--copy);font-family:var(--sans);font-size:14px;line-height:20px;-webkit-font-smoothing:antialiased}
+button,input,textarea,select{font:inherit;color:inherit}
 button{cursor:pointer}
-:where(a,button,[tabindex]):focus-visible{outline:2px solid var(--pumpkin);outline-offset:2px}
+button:disabled{cursor:not-allowed;opacity:.45}
+:where(button,select,textarea,a):focus-visible{outline:2px solid var(--pumpkin);outline-offset:2px}
 .hidden{display:none!important}
-.app{display:grid;grid-template-columns:280px 1fr;height:100vh}
-.sidebar{border-right:1px solid var(--line);background:var(--surface-0);display:flex;flex-direction:column;min-height:0}
-.brand{display:flex;align-items:center;gap:10px;padding:16px 16px;height:64px;border-bottom:1px solid var(--line);font-size:16px;font-weight:500;letter-spacing:-.01em;color:var(--copy-strong)}
-.brand small{display:block;color:var(--copy-muted);font-weight:400;font-size:12px;letter-spacing:0}
-.mark{width:22px;height:22px;border-radius:6px;background:var(--pumpkin);display:grid;place-items:center;color:#000;font-weight:600;font-size:12px;flex-shrink:0}
-.side-actions{padding:12px;display:grid;gap:8px;border-bottom:1px solid var(--line)}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;height:36px;padding:0 16px;border:1px solid var(--line-strong);background:transparent;color:var(--copy-strong);border-radius:9999px;font-size:14px;font-weight:500;transition:background-color .15s,border-color .15s,transform .15s}
-.btn:hover{background:var(--surface-2);border-color:var(--copy-muted)}
-.btn:active{transform:scale(.96)}
-.btn.primary{background:var(--pumpkin);border-color:var(--pumpkin);color:#000}
-.btn.primary:hover{background:var(--pumpkin-hover);border-color:var(--pumpkin-hover)}
+svg{display:block;flex-shrink:0}
+.app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:56px;display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--bar);border-bottom:1px solid var(--line);flex-shrink:0;min-width:0}
+.spacer{flex:1}
+.top-title{margin:0;font-size:15px;font-weight:500;color:var(--copy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.row-gap{display:flex;align-items:center;gap:8px;margin-left:auto}
+.ib{width:38px;height:38px;border-radius:10px;border:1px solid var(--line-2);background:transparent;display:inline-grid;place-items:center;color:var(--copy);transition:background-color .15s,border-color .15s}
+.ib:hover{background:var(--surface-2);border-color:#4a4a4a}
+.ib.round{border-radius:50%;width:36px;height:36px;border-color:transparent}
+.ib.round:hover{background:var(--surface-3)}
+.ib.on{color:var(--pumpkin);background:rgba(254,117,14,.1)}
+.balance{height:38px;display:inline-flex;align-items:center;gap:8px;padding:0 14px;border:1px solid var(--line-2);border-radius:9999px;color:var(--copy);font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.balance svg{color:var(--copy-2)}
+.ghost{height:36px;display:inline-flex;align-items:center;gap:7px;padding:0 13px;border:1px solid var(--line-2);border-radius:9999px;background:transparent;color:var(--copy);font-size:14px;white-space:nowrap}
+.ghost:hover{background:var(--surface-2)}
+.body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+/* sidebar drawer */
+.sidebar{position:fixed;top:56px;left:0;bottom:0;width:300px;max-width:88vw;background:var(--bar);border-right:1px solid var(--line);z-index:20;transform:translateX(-102%);transition:transform .2s ease;display:flex;flex-direction:column}
+.sidebar.open{transform:none}
+.side-head{padding:14px;display:grid;gap:8px;border-bottom:1px solid var(--line)}
+.side-head .row{display:flex;gap:8px}
+.btn{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:0 14px;border:1px solid var(--line-2);background:transparent;color:var(--copy);border-radius:9999px;font-size:14px;font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--copy);border-color:var(--copy);color:#0a0a0a}
+.btn.primary:hover{background:#fff}
 .btn.danger{color:#fca5a5}
-.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .btn.small{height:30px;padding:0 12px;font-size:13px}
-.btn.ghost{border-color:transparent;background:transparent;color:var(--copy-secondary);justify-self:start}
-.btn.ghost:hover{color:var(--copy-strong);background:var(--surface-2)}
 .task-list{overflow:auto;flex:1;padding:8px}
-.task-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:var(--radius);padding:10px 12px;margin-bottom:2px;transition:background-color .15s}
-.task-item:hover{background:var(--surface-2)}
-.task-item.active{background:var(--surface-2);border-color:var(--line-strong)}
-.task-item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;font-weight:500;color:var(--copy-strong)}
-.task-item .m{color:var(--copy-muted);font-size:12px;display:flex;gap:8px;align-items:center;margin-top:4px}
-.pill{display:inline-flex;align-items:center;gap:6px;border-radius:9999px;padding:2px 10px;font-size:12px;font-weight:500;line-height:18px;border:1px solid var(--line-strong);background:var(--surface-2);color:var(--copy-secondary);text-transform:capitalize;white-space:nowrap}
+.task-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:12px;padding:10px 12px;margin-bottom:2px}
+.task-item:hover{background:var(--surface)}
+.task-item.active{background:var(--surface);border-color:var(--line-2)}
+.task-item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;color:var(--copy)}
+.task-item .m{color:var(--copy-3);font-size:12px;display:flex;gap:8px;align-items:center;margin-top:4px}
+.scrim{position:fixed;inset:56px 0 0 0;background:rgba(0,0,0,.5);z-index:15;opacity:0;pointer-events:none;transition:opacity .2s}
+.scrim.open{opacity:1;pointer-events:auto}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:9999px;padding:2px 10px;font-size:12px;font-weight:500;line-height:18px;border:1px solid var(--line-2);background:var(--surface-2);color:var(--copy-2);text-transform:capitalize;white-space:nowrap}
 .pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
-.pill.queued{color:var(--copy-secondary)}
-.pill.running,.pill.recovering{color:var(--run);border-color:rgba(254,117,14,.35);background:rgba(254,117,14,.08)}
-.pill.waiting_human{color:var(--pumpkin-soft);border-color:rgba(255,169,105,.35);background:rgba(81,39,4,.35)}
-.pill.completed{color:var(--ok);border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08)}
-.pill.failed,.pill.cancelled{color:#fca5a5;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08)}
-.main{overflow:auto;min-width:0;background:var(--bg)}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;height:64px;padding:0 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(12px);z-index:2}
-.topbar h2{margin:0;font-size:16px;font-weight:500;letter-spacing:-.01em;color:var(--copy-strong)}
-.tabs{display:flex;gap:4px;padding:4px;background:var(--surface-2);border-radius:9999px}
-.tab{background:transparent;border:0;border-radius:9999px;height:28px;padding:0 12px;color:var(--copy-secondary);font-size:13px;font-weight:500}
-.tab:hover{color:var(--copy-strong)}
-.tab.on{background:var(--surface-3);color:var(--copy-strong)}
-.content{padding:24px;max-width:1100px}
-.card{background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);padding:20px;margin-bottom:16px}
-.card h3{margin:0 0 12px;font-size:12px;color:var(--copy-muted);text-transform:uppercase;letter-spacing:.06em;font-weight:500;font-family:var(--font-mono)}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 16px;font-size:14px}
-.kv div:nth-child(odd){color:var(--copy-muted)}
-.kv div{overflow-wrap:anywhere}
-.mono,code{font-family:var(--font-mono);font-size:12px}
-textarea,input,select{width:100%;background:var(--surface-0);border:1px solid var(--line-strong);border-radius:var(--radius);padding:8px 12px;outline:none;color:var(--copy-strong);transition:border-color .15s}
-textarea::placeholder,input::placeholder{color:var(--copy-muted)}
-textarea:focus,input:focus,select:focus{border-color:var(--pumpkin)}
-textarea{min-height:110px;resize:vertical}
-label{display:block;font-size:13px;color:var(--copy-secondary);margin:12px 0 6px;font-weight:500}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.progress{height:4px;background:var(--surface-3);border-radius:9999px;overflow:hidden;margin:12px 0}
-.progress span{display:block;height:100%;background:var(--pumpkin);width:0;transition:width .4s}
-.progress.indet span{width:35%;animation:slide 1.4s ease-in-out infinite alternate}
-@keyframes slide{from{margin-left:0}to{margin-left:65%}}
-.banner{border:1px solid rgba(254,117,14,.35);background:var(--pumpkin-deep);color:var(--pumpkin-soft);border-radius:var(--radius);padding:16px;margin-bottom:16px}
-.banner strong{display:block;margin-bottom:4px;color:#fff;font-weight:500}
-.logs{background:var(--surface-0);border:1px solid var(--line);border-radius:var(--radius);max-height:340px;overflow:auto;padding:8px 12px}
-.log{display:grid;grid-template-columns:150px 58px 1fr;gap:8px;font-size:12px;font-family:var(--font-mono);padding:4px 0;border-bottom:1px dashed var(--surface-3)}
-.log .lv{color:var(--copy-muted);text-transform:uppercase}
-.log .lv.error{color:#fca5a5}
-.log .lv.warning{color:var(--pumpkin-soft)}
-.log .ts{color:var(--copy-muted)}
-.shot{width:100%;border-radius:var(--radius);border:1px solid var(--line);background:#000}
-.empty{color:var(--copy-secondary);text-align:center;padding:48px 20px}
-.err{color:#fca5a5;font-size:13px;min-height:18px}
+.pill.running,.pill.recovering{color:var(--pumpkin);border-color:rgba(254,117,14,.35)}
+.pill.waiting_human{color:#ffa969;border-color:rgba(255,169,105,.35)}
+.pill.completed{color:var(--ok);border-color:rgba(16,185,129,.35)}
+.pill.failed,.pill.cancelled{color:var(--bad);border-color:rgba(248,113,113,.35)}
+/* home */
+.home{flex:1;overflow:auto;display:flex;justify-content:center;padding:0 22px}
+.wrap{width:min(860px,100%);padding-top:clamp(56px,14vh,150px)}
+.crumb{font:500 12px/16px var(--mono);letter-spacing:.14em;color:var(--copy-3);text-transform:uppercase}
+.hero{display:flex;align-items:center;gap:14px;margin:28px 0 48px;font-size:clamp(34px,5vw,46px);font-weight:500;letter-spacing:-.025em;color:var(--copy)}
+.logo{width:34px;height:34px;color:var(--copy)}
+/* composer */
+.composer{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:20px 22px 14px;transition:border-color .2s,box-shadow .2s}
+.composer:focus-within{border-color:var(--orange);box-shadow:0 0 0 1px rgba(254,117,14,.08),0 0 40px var(--orange-glow)}
+.composer textarea{display:block;width:100%;min-height:72px;max-height:260px;resize:none;background:transparent;border:0;outline:none;padding:0;font-size:17px;line-height:1.5;color:var(--copy)}
+.composer textarea::placeholder{color:#6f6f6f}
+.cbar{display:flex;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
+.chipsel{position:relative;height:36px;display:inline-flex;align-items:center;gap:6px;padding:0 10px 0 8px;border:1px solid transparent;border-radius:9999px;color:var(--copy);font-size:14px;cursor:pointer}
+.chipsel:hover{background:var(--surface-3)}
+.chipsel select{appearance:none;-webkit-appearance:none;background:transparent;border:0;outline:none;padding:0 14px 0 0;margin:0;width:auto;max-width:220px;color:inherit;font-size:14px;cursor:pointer}
+.chipsel select option,.chipsel select optgroup{background:#161616;color:var(--copy)}
+.chipsel .chev{position:absolute;right:9px;pointer-events:none;color:var(--copy-2)}
+.chipsel.muted select{color:var(--copy-2)}
+.provi{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg,#fe750e,#ffa969);color:#111;font-size:10px;font-weight:700;display:inline-grid;place-items:center;flex-shrink:0}
+.effort select{color:var(--copy-2)}
+.cost{color:var(--copy-3);font-size:14px;font-variant-numeric:tabular-nums}
+.send{margin-left:auto;width:42px;height:42px;border-radius:50%;border:0;background:#4a4a4a;color:#8a8a8a;display:inline-grid;place-items:center;transition:background-color .15s,color .15s}
+.send.ready{background:var(--copy);color:#0a0a0a}
+.send:disabled{opacity:1;cursor:not-allowed}
+.err{color:var(--bad);font-size:13px;min-height:18px;margin-top:8px}
 .ok{color:var(--ok);font-size:13px}
-.auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:10}
-.auth form{width:min(380px,calc(100% - 32px));background:var(--surface-1);border:1px solid var(--line);border-radius:var(--radius);padding:24px}
-.auth h1{margin:0 0 4px;font-size:24px;font-weight:500;letter-spacing:-.03em;color:var(--copy-strong)}
-.auth p{color:var(--copy-secondary);margin:0 0 14px;font-size:14px}
-.auth .btn{width:100%;margin-top:14px}
+/* task view */
+.taskview{flex:1;min-height:0;display:flex;flex-direction:column}
+.threadhead{display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 16px 0;color:var(--copy-2);font-size:13px;flex-wrap:wrap}
+.threadhead .btn{height:30px;padding:0 12px;font-size:13px}
+.thread{flex:1;overflow:auto;padding:16px 16px 28px;min-height:0}
+.thread-inner{width:min(860px,100%);margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.bubble{align-self:flex-end;max-width:min(78%,640px);background:var(--surface-2);border-radius:26px;padding:16px 22px;color:var(--copy);font-size:16px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+.filecard{align-self:flex-end;display:flex;align-items:center;gap:12px;background:#1c1c1c;border:1px solid var(--line-2);border-radius:20px;padding:10px 14px 10px 10px;max-width:min(78%,420px)}
+.filecard .tile{width:44px;height:44px;border-radius:12px;background:var(--surface-3);display:grid;place-items:center;color:var(--copy-2)}
+.filecard .nm{color:var(--copy);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filecard .sz{color:var(--copy-3);font-size:12px}
+.agent{max-width:760px;color:var(--copy);white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:1.6}
+.sys{color:var(--copy-3);font-size:13px}
+.activity{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;background:none;border:0;padding:4px 0;color:var(--copy-2);font-size:14px;text-align:left}
+.activity:hover{color:var(--copy)}
+.activity .chev{transition:transform .15s}
+.activity[aria-expanded="true"] .chev{transform:rotate(90deg)}
+.actpanel{align-self:stretch;background:var(--bar);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-top:-4px}
+.actpanel h4{margin:0 0 10px;font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--copy-3);font-family:var(--mono)}
+.actpanel h4:not(:first-child){margin-top:16px}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:13px}
+.kv div:nth-child(odd){color:var(--copy-3)}
+.kv div{overflow-wrap:anywhere}
+.logs{max-height:300px;overflow:auto}
+.log{display:grid;grid-template-columns:140px 56px 1fr;gap:8px;font:12px/18px var(--mono);padding:3px 0;border-bottom:1px dashed var(--surface-3)}
+.log .ts{color:var(--copy-3)}
+.log .lv{color:var(--copy-3);text-transform:uppercase}
+.log .lv.error{color:var(--bad)}
+.log .lv.warning{color:#ffa969}
+.banner{margin:12px auto 0;width:min(860px,calc(100% - 32px));border:1px solid rgba(254,117,14,.35);background:rgba(81,39,4,.35);color:#ffa969;border-radius:20px;padding:16px 18px}
+.banner strong{display:block;margin-bottom:4px;color:#fff;font-weight:500}
+.banner .row{margin-top:12px}
+.dock{padding:8px 16px 18px;background:linear-gradient(to top,var(--bg) 70%,rgba(10,10,10,0))}
+.dock .composer{width:min(860px,100%);margin:0 auto;border-radius:28px}
+/* side panels */
+.panel{position:fixed;top:56px;right:0;bottom:0;width:min(460px,100%);background:var(--bar);border-left:1px solid var(--line);z-index:25;transform:translateX(104%);transition:transform .2s ease;display:flex;flex-direction:column;min-height:0}
+.panel.open{transform:none}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+.panel-head h3{margin:0;font-size:16px;font-weight:500}
+.panel-body{padding:18px;overflow:auto;flex:1;display:grid;gap:16px;align-content:start}
+.sect{border:1px solid var(--line);border-radius:16px;padding:14px 16px;background:var(--surface)}
+.sect h4{margin:0 0 10px;font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--copy-3);font-family:var(--mono)}
+.field{display:block;width:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:12px;padding:8px 12px;color:var(--copy);outline:none;font-size:14px}
+.field:focus{border-color:var(--orange)}
+label.lab{display:block;font-size:12px;color:var(--copy-2);margin:10px 0 6px}
+label.lab:first-child{margin-top:0}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{background:var(--surface-2);border:1px solid var(--line-strong);border-radius:9999px;padding:2px 10px;font-size:12px;color:var(--copy-secondary)}
-.chip.on{color:var(--copy-strong);border-color:var(--copy-muted)}
-@media(max-width:860px){.app{grid-template-columns:1fr;height:auto}.sidebar{max-height:45vh}.grid2{grid-template-columns:1fr}.kv{grid-template-columns:110px 1fr}.log{grid-template-columns:1fr}}
+.chip{background:var(--surface-2);border:1px solid var(--line-2);border-radius:9999px;padding:2px 10px;font-size:12px;color:var(--copy-2)}
+.shot{width:100%;border-radius:14px;border:1px solid var(--line);background:#000}
+.hint{color:var(--copy-3);font-size:12px;margin-top:8px}
+/* auth */
+.auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50}
+.auth form{width:min(380px,calc(100% - 32px));background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px}
+.auth h1{margin:0 0 4px;font-size:24px;font-weight:500;letter-spacing:-.02em}
+.auth p{color:var(--copy-2);margin:0 0 14px}
+.auth .btn{width:100%;margin-top:14px}
+.auth .field{margin-bottom:2px}
+@media(max-width:700px){.balance span.lbl{display:none}.bubble{max-width:92%}.filecard{max-width:92%}.hero{margin-bottom:32px}.kv{grid-template-columns:110px 1fr}.log{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div id="auth" class="auth hidden">
   <form id="authForm">
-    <div class="brand" style="border:0;padding:0 0 14px"><span class="mark">P</span><span>Phoenix<small>Autonomous Agent console</small></span></div>
     <h1 id="authTitle">Sign in</h1>
     <p>Use the same account as the main Phoenix workspace.</p>
-    <label for="email">Email</label>
-    <input id="email" type="email" autocomplete="username" required>
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" minlength="8" required>
+    <label class="lab" for="email">Email</label>
+    <input class="field" id="email" type="email" autocomplete="username" required>
+    <label class="lab" for="password">Password</label>
+    <input class="field" id="password" type="password" autocomplete="current-password" minlength="8" required>
     <div class="err" id="authErr"></div>
     <button class="btn primary" id="authBtn" type="submit">Sign in</button>
     <button class="btn" id="authSwitch" type="button" style="margin-top:8px">Create an account instead</button>
@@ -118,170 +174,207 @@ label{display:block;font-size:13px;color:var(--copy-secondary);margin:12px 0 6px
 </div>
 
 <div id="app" class="app hidden">
-  <aside class="sidebar">
-    <div class="brand"><span class="mark">P</span><span>Phoenix<small>Browser agent console</small></span></div>
-    <div class="side-actions">
-      <button class="btn primary" id="newTaskBtn">+ New task</button>
-      <button class="btn" id="refreshBtn">Refresh</button>
-      <button class="btn small" id="logoutBtn" style="justify-self:start;border:0;background:none;color:var(--muted)">Sign out</button>
+  <header class="topbar">
+    <button class="ib" id="sideBtn" type="button" aria-label="Toggle sidebar" title="Tasks">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+    </button>
+    <h2 class="top-title hidden" id="topTitle"></h2>
+    <div class="row-gap" id="homeRight">
+      <span class="balance" title="Balance is not exposed by this server yet">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 9.2c-.5-.9-1.5-1.4-2.6-1.4-1.6 0-2.7.9-2.7 2.1 0 2.8 5.6 1.4 5.6 4.1 0 1.2-1.2 2.1-2.8 2.1-1.2 0-2.2-.5-2.7-1.4M12 6.5v1.4M12 16.1v1.4"/></svg>
+        <span>$<span id="balance">--</span></span>
+      </span>
+      <button class="ib" id="keyBtn" type="button" aria-label="Models and proxy" title="Models and proxy">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/></svg>
+      </button>
     </div>
-    <div class="task-list" id="taskList"><div class="empty">Loading tasks…</div></div>
+    <div class="row-gap hidden" id="taskRight">
+      <button class="ghost" id="shareBtn" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 8l5-5 5 5M5 14v5h14v-5"/></svg>Share
+      </button>
+      <button class="ghost" id="filesBtn" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Files
+      </button>
+    </div>
+  </header>
+
+  <aside class="sidebar" id="sidebar" aria-label="Tasks">
+    <div class="side-head">
+      <div class="row"><button class="btn primary" id="newTaskBtn" type="button" style="flex:1">New task</button></div>
+      <div class="row">
+        <button class="btn small" id="refreshBtn" type="button">Refresh</button>
+        <button class="btn small danger" id="logoutBtn" type="button">Sign out</button>
+      </div>
+    </div>
+    <div class="task-list" id="taskList"><div class="hint" style="padding:12px">Loading tasks…</div></div>
   </aside>
+  <div class="scrim" id="scrim"></div>
 
-  <main class="main">
-    <div class="topbar">
-      <h2 id="pageTitle">Tasks</h2>
-      <div class="tabs">
-        <button class="tab on" data-view="detail" id="tabDetail">Task</button>
-        <button class="tab" data-view="settings" id="tabSettings">Models &amp; proxy</button>
-      </div>
-    </div>
-
-    <section class="content hidden" id="viewCreate">
-      <div class="card">
-        <h3>New browser task</h3>
-        <label for="instruction">What should Phoenix do?</label>
-        <textarea id="instruction" placeholder="e.g. Go to example.com, find the pricing page and summarise the plans."></textarea>
-        <div class="grid2">
-          <div>
-            <label for="startUrl">Start URL (optional)</label>
-            <input id="startUrl" placeholder="https://">
+  <main class="body">
+    <!-- HOME: centered composer -->
+    <section class="home" id="viewHome">
+      <div class="wrap">
+        <div class="crumb">DASHBOARD / V4</div>
+        <h1 class="hero">
+          <svg class="logo" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><path d="M24 6a18 18 0 1 1-18 18"/><path d="M24 14a10 10 0 1 1-10 10"/><circle cx="24" cy="24" r="3" fill="currentColor" stroke="none"/></svg>
+          <span>Phoenix</span>
+        </h1>
+        <div class="composer" id="homeComposer">
+          <textarea id="homeInstruction" rows="3" placeholder="Describe what you want the agent to do..." aria-label="Describe the task"></textarea>
+          <div class="cbar">
+            <button class="ib round" id="homeAttach" type="button" title="Attachments are not supported by this server yet" disabled aria-label="Attach files">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"/></svg>
+            </button>
+            <button class="ib round" id="homeSettings" type="button" title="Run options, models and proxy" aria-label="Run options">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></svg>
+            </button>
+            <label class="chipsel" id="homeModelWrap">
+              <span class="provi" id="homeProv">A</span>
+              <select id="homeModel" aria-label="Model"></select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
+            <label class="chipsel effort" id="homeEffortWrap" title="Effort (sent with the task once the server supports it)">
+              <select id="homeEffort" aria-label="Effort">
+                <option value="Low">Low</option><option value="Medium">Medium</option><option value="High" selected>High</option><option value="Max">Max</option>
+              </select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
+            <button class="ib round" id="homeFast" type="button" title="Fast mode (not yet supported by this server)" aria-pressed="false" aria-label="Fast mode">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </button>
+            <button class="send" id="homeSubmit" type="button" aria-label="Start task" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
           </div>
-          <div>
-            <label for="timeout">Timeout seconds (optional)</label>
-            <input id="timeout" type="number" min="10" max="3600" placeholder="server default">
-          </div>
-          <div>
-            <label for="provider">Provider</label>
-            <select id="provider">
-              <option value="auto">Automatic (primary, then fallback)</option>
-              <option value="primary">Phoenix AI</option>
-              <option value="gemini">Google Gemini</option>
-            </select>
-          </div>
-          <div>
-            <label for="model">Model</label>
-            <select id="model"><option value="">Loading models…</option></select>
-          </div>
-          <div>
-            <label for="proxyMode">Proxy</label>
-            <select id="proxyMode">
-              <option value="direct">Direct connection</option>
-              <option value="configured">Configured protected proxy</option>
-            </select>
-          </div>
-        </div>
-        <div class="row" style="margin-top:14px">
-          <button class="btn primary" id="createBtn">Start task</button>
-          <button class="btn" id="cancelCreateBtn">Cancel</button>
-          <span class="err" id="createErr"></span>
+          <div class="err" id="homeErr"></div>
         </div>
       </div>
     </section>
 
-    <section class="content hidden" id="viewDetail">
-      <div class="empty" id="emptyDetail">Select a task on the left, or start a new one.</div>
-      <div id="detail" class="hidden">
-        <div id="pauseBanner" class="banner hidden">
-          <strong>Human verification needed</strong>
-          <span id="pauseText">Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.</span>
-          <div class="row" style="margin-top:10px">
-            <button class="btn primary small" id="resumeBtn">I've completed verification, resume</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="row" style="justify-content:space-between">
-            <div>
-              <div id="dTitle" style="font-weight:650;font-size:16px"></div>
-              <div class="mono" id="dSlug" style="color:var(--muted)"></div>
-            </div>
-            <span id="dStatus" class="pill">queued</span>
-          </div>
-          <div class="progress" id="dBar"><span></span></div>
-          <div id="dProgress" style="color:var(--muted)"></div>
-          <div class="row" style="margin-top:12px">
-            <button class="btn small" id="cancelBtn">Cancel task</button>
-            <button class="btn small" id="retryBtn">Retry</button>
-          </div>
-          <div class="err" id="dErr" style="margin-top:8px"></div>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <h3>Details</h3>
-            <div class="kv" id="dKv"></div>
-          </div>
-          <div class="card">
-            <h3>Checkpoint &amp; resume</h3>
-            <div class="kv" id="cKv"></div>
-          </div>
-        </div>
-
-        <div class="card" id="resultCard">
-          <h3>Result</h3>
-          <div id="dResult" style="white-space:pre-wrap"></div>
-        </div>
-
-        <div class="card" id="browserCard">
-          <h3>Remote browser</h3>
-          <img id="shot" class="shot hidden" alt="Remote browser screenshot">
-          <div class="row" style="margin-top:8px">
-            <button class="btn small" id="shotBtn">Refresh view</button>
-            <span id="shotMsg" style="color:var(--muted);font-size:12px"></span>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Logs</h3>
-          <div class="logs" id="logs"><div class="empty" style="padding:14px">No logs yet.</div></div>
-        </div>
-
-        <div class="card">
-          <h3>Messages to this task</h3>
-          <textarea id="composer" placeholder="Send a note Phoenix will read on its next step"></textarea>
-          <div class="row" style="margin-top:8px">
-            <button class="btn small" id="sendMsgBtn">Send message</button>
-            <span id="msgStatus" style="color:var(--muted);font-size:12px"></span>
-          </div>
-        </div>
+    <!-- TASK VIEW: chat thread + bottom composer -->
+    <section class="taskview hidden" id="viewTask">
+      <div class="threadhead">
+        <span class="pill" id="dStatus">queued</span>
+        <span id="ckText">No checkpoint</span>
+        <button class="btn small" id="cancelBtn" type="button">Cancel task</button>
+        <button class="btn small" id="retryBtn" type="button" disabled>Retry</button>
       </div>
-    </section>
-
-    <section class="content hidden" id="viewSettings">
-      <div class="grid2">
-        <div class="card">
-          <h3>Models</h3>
-          <div id="modelsInfo" style="color:var(--muted)">Loading…</div>
-        </div>
-        <div class="card">
-          <h3>Proxy</h3>
-          <div class="kv" id="proxyKv"></div>
-        </div>
-        <div class="card">
-          <h3>Runtime</h3>
-          <div class="kv" id="runtimeKv"></div>
-        </div>
-        <div class="card">
-          <h3>Agent instructions</h3>
-          <div class="kv" id="instrKv"></div>
+      <div id="pauseBanner" class="banner hidden">
+        <strong>Human verification needed</strong>
+        <span id="pauseText">Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.</span>
+        <div class="row"><button class="btn small primary" id="resumeBtn" type="button">I've completed verification, resume</button></div>
+      </div>
+      <div class="thread" id="thread"><div class="thread-inner" id="threadInner"></div></div>
+      <div class="err" id="taskErr" style="text-align:center;padding:0 16px"></div>
+      <div class="dock">
+        <div class="composer" id="taskComposer">
+          <textarea id="composer" rows="2" placeholder="Message the agent..." aria-label="Message the agent"></textarea>
+          <div class="cbar">
+            <button class="ib round" id="taskAttach" type="button" title="Attachments are not supported by this server yet" disabled aria-label="Attach files">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3L15 7.5"/></svg>
+            </button>
+            <button class="ib round" id="taskSettings" type="button" title="Run options, models and proxy" aria-label="Run options">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></svg>
+            </button>
+            <label class="chipsel muted" title="Model is fixed for this task">
+              <span class="provi" id="taskProv">A</span>
+              <select id="taskModel" aria-label="Task model" disabled></select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
+            <label class="chipsel effort muted" title="Effort applies to new tasks">
+              <select id="taskEffort" aria-label="Effort" disabled><option>High</option></select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
+            <button class="ib round" id="taskFast" type="button" title="Fast mode (not yet supported by this server)" disabled aria-label="Fast mode">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </button>
+            <span class="cost hidden" id="costLabel"></span>
+            <button class="send" id="sendMsgBtn" type="button" aria-label="Send message" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          </div>
+          <div class="err" id="msgStatus"></div>
         </div>
       </div>
     </section>
   </main>
+
+  <!-- FILES: remote browser view -->
+  <aside class="panel" id="filesPanel" aria-label="Files">
+    <div class="panel-head"><h3>Files</h3><button class="ib" type="button" data-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="panel-body">
+      <div class="sect">
+        <h4>Remote browser</h4>
+        <img id="shot" class="shot hidden" alt="Remote browser screenshot">
+        <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:10px">
+          <button class="btn small" id="shotBtn" type="button">Refresh view</button>
+          <span id="shotMsg" class="hint" style="margin:0"></span>
+        </div>
+        <div class="hint">The live browser view is available while a task is paused for verification.</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- SETTINGS: models, proxy, runtime (slide-over opened from the sliders and key buttons) -->
+  <aside class="panel" id="settingsPanel" aria-label="Models and proxy">
+    <div class="panel-head"><h3>Models &amp; proxy</h3><button class="ib" type="button" data-close aria-label="Close">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="panel-body">
+      <div class="sect">
+        <h4>Run options (new tasks)</h4>
+        <label class="lab" for="startUrl">Start URL (optional)</label>
+        <input class="field" id="startUrl" placeholder="https://">
+        <label class="lab" for="timeout">Timeout seconds (optional)</label>
+        <input class="field" id="timeout" type="number" min="10" max="3600" placeholder="server default">
+        <label class="lab" for="proxyMode">Proxy</label>
+        <select class="field" id="proxyMode">
+          <option value="direct">Direct connection</option>
+          <option value="configured">Configured protected proxy</option>
+        </select>
+      </div>
+      <div class="sect">
+        <h4>Models</h4>
+        <div id="modelsInfo" class="hint" style="margin:0">Loading…</div>
+      </div>
+      <div class="sect">
+        <h4>Proxy</h4>
+        <div class="kv" id="proxyKv"></div>
+      </div>
+      <div class="sect">
+        <h4>Runtime</h4>
+        <div class="kv" id="runtimeKv"></div>
+      </div>
+      <div class="sect">
+        <h4>Agent instructions</h4>
+        <div class="kv" id="instrKv"></div>
+      </div>
+      <div class="sect">
+        <button class="btn danger" id="settingsLogout" type="button">Sign out</button>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <script>
 (function(){
 'use strict';
 const KEY='phoenix_token';
+const EP={messages:'/messages',logs:'/logs',resume:'/resume',shot:'/screenshot'};
+const RUN=['queued','running','recovering','waiting_human'];
+const DONE=['completed','failed','cancelled'];
 let token=localStorage.getItem(KEY)||'';
 let authMode='login';
 let selectedRef=null;
 let tasks=[];
-let detailTimer=null,listTimer=null;
-let detailBusy=false,listBusy=false;
+let detail=null;
+let msgs=[];
+let logsList=[];
+let logsOpen=false;
+let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
+let catalog=[];
+const cfg={model:'auto|',effort:'High',fast:false};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -298,10 +391,12 @@ async function api(path,opts={}){
 function fmtTime(iso){if(!iso)return '';const d=new Date(iso);return isNaN(d)?iso:d.toLocaleString()}
 function ago(iso){if(!iso)return '';const s=Math.max(0,(Date.now()-new Date(iso))/1000);if(s<60)return Math.floor(s)+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'}
 function label(s){return String(s||'').replace(/_/g,' ')}
+function secsOf(t){const start=Date.parse(t.created_at);const end=RUN.includes(t.status)?Date.now():Date.parse(t.updated_at);return isNaN(start)||isNaN(end)?0:Math.max(0,Math.round((end-start)/1000))}
+function dur(s){return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'}
 
 function showAuth(){$('auth').classList.remove('hidden');$('app').classList.add('hidden')}
 function showApp(){$('auth').classList.add('hidden');$('app').classList.remove('hidden')}
-function logout(silent){token='';localStorage.removeItem(KEY);stopTimers();selectedRef=null;showAuth();if(silent)$('authErr').textContent='Session expired. Sign in again.'}
+function logout(silent){token='';localStorage.removeItem(KEY);stopTimers();selectedRef=null;closePanels();showAuth();if(silent)$('authErr').textContent='Session expired. Sign in again.'}
 function stopTimers(){clearTimeout(detailTimer);clearTimeout(listTimer)}
 
 $('authSwitch').onclick=()=>{authMode=authMode==='login'?'register':'login';$('authTitle').textContent=authMode==='login'?'Sign in':'Create account';$('authBtn').textContent=authMode==='login'?'Sign in':'Create account';$('authSwitch').textContent=authMode==='login'?'Create an account instead':'Sign in instead';$('authErr').textContent=''};
@@ -318,144 +413,258 @@ $('authForm').onsubmit=async e=>{
   finally{$('authBtn').disabled=false}
 };
 
+/* ---------- panels and sidebar ---------- */
+function setSide(open){$('sidebar').classList.toggle('open',open);$('scrim').classList.toggle('open',open||isPanelOpen())}
+function isPanelOpen(){return $('filesPanel').classList.contains('open')||$('settingsPanel').classList.contains('open')}
+function openPanel(id){closePanels(id);$('sidebar').classList.remove('open');$(id).classList.add('open');$('scrim').classList.add('open');if(id==='settingsPanel')loadSettings();if(id==='filesPanel')refreshShot()}
+function closePanels(except){['filesPanel','settingsPanel'].forEach(id=>{if(id!==except)$(id).classList.remove('open')});if(!except||except==='sidebar'){}if(!except)$('scrim').classList.remove('open')}
+$('sideBtn').onclick=()=>{const open=!$('sidebar').classList.contains('open');closePanels();setSide(open)};
+$('scrim').onclick=()=>{setSide(false);closePanels()};
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{closePanels();$('scrim').classList.remove('open')});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){setSide(false);closePanels();$('scrim').classList.remove('open')}});
+$('filesBtn').onclick=()=>openPanel('filesPanel');
+$('keyBtn').onclick=()=>openPanel('settingsPanel');
+$('homeSettings').onclick=()=>openPanel('settingsPanel');
+$('taskSettings').onclick=()=>openPanel('settingsPanel');
+$('settingsLogout').onclick=()=>logout(false);
 $('logoutBtn').onclick=()=>logout(false);
 $('refreshBtn').onclick=()=>{loadTasks();if(selectedRef)loadDetail()};
-$('newTaskBtn').onclick=()=>{selectedRef=null;renderList();showView('create')};
-$('cancelCreateBtn').onclick=()=>showView(selectedRef?'detail':'detail');
-$('tabDetail').onclick=()=>showView('detail');
-$('tabSettings').onclick=()=>{showView('settings');loadSettings()};
+$('newTaskBtn').onclick=()=>{setSide(false);location.hash=''};
+$('shotBtn').onclick=refreshShot;
+$('shareBtn').onclick=async()=>{
+  const url=location.href;
+  try{await navigator.clipboard.writeText(url);$('taskErr').textContent='Link copied.';$('taskErr').className='ok'}
+  catch(e){$('taskErr').textContent=url;$('taskErr').className='hint'}
+  setTimeout(()=>{$('taskErr').textContent='';$('taskErr').className='err'},2500);
+};
 
-function showView(name){
-  ['viewCreate','viewDetail','viewSettings'].forEach(id=>$(id).classList.add('hidden'));
-  $('tabDetail').classList.toggle('on',name==='detail'||name==='create');
-  $('tabSettings').classList.toggle('on',name==='settings');
-  if(name==='create'){$('viewCreate').classList.remove('hidden');$('pageTitle').textContent='New task'}
-  else if(name==='settings'){$('viewSettings').classList.remove('hidden');$('pageTitle').textContent='Models & proxy'}
-  else{$('viewDetail').classList.remove('hidden');$('pageTitle').textContent=selectedRef?'Task':'Tasks';if(!selectedRef){$('emptyDetail').classList.remove('hidden');$('detail').classList.add('hidden')}}
+/* ---------- routing: '' = home composer, '#/task/<ref>' = task view ---------- */
+function route(){
+  const m=location.hash.match(/^#\/task\/(.+)$/);
+  if(m){selectedRef=decodeURIComponent(m[1]);showTask()}
+  else{selectedRef=null;showHome()}
+  renderList();
+}
+window.addEventListener('hashchange',route);
+
+function showHome(){
+  stopTimers();detail=null;msgs=[];
+  $('viewTask').classList.add('hidden');$('viewHome').classList.remove('hidden');
+  $('topTitle').classList.add('hidden');$('taskRight').classList.add('hidden');$('homeRight').classList.remove('hidden');
+  $('topTitle').textContent='';
+  loadTasks();
+}
+function showTask(){
+  $('viewHome').classList.add('hidden');$('viewTask').classList.remove('hidden');
+  $('homeRight').classList.add('hidden');$('taskRight').classList.remove('hidden');$('topTitle').classList.remove('hidden');
+  $('threadInner').innerHTML='';
+  logsOpen=false;shotUrl=null;$('shot').src='';$('shot').classList.add('hidden');
+  loadDetail();
 }
 
+/* ---------- task list ---------- */
 function renderList(){
-  if(!tasks.length){$('taskList').innerHTML='<div class="empty">No tasks yet. Start one with New task.</div>';return}
+  if(!tasks.length){$('taskList').innerHTML='<div class="hint" style="padding:12px">No tasks yet.</div>';return}
   $('taskList').innerHTML=tasks.map(t=>{
-    const active=t.id===selectedRef||t.slug===selectedRef?' active':'';
-    return '<button class="task-item'+active+'" data-ref="'+esc(t.slug||t.id)+'">'+
+    const ref=t.slug||t.id;
+    const active=ref===selectedRef?' active':'';
+    return '<button class="task-item'+active+'" data-ref="'+esc(ref)+'">'+
       '<div class="t">'+esc(t.instruction)+'</div>'+
       '<div class="m"><span class="pill '+esc(t.status)+'">'+esc(label(t.status))+'</span><span>'+esc(ago(t.updated_at))+'</span></div></button>';
   }).join('');
-  document.querySelectorAll('.task-item').forEach(b=>b.onclick=()=>openTask(b.dataset.ref));
+  document.querySelectorAll('.task-item').forEach(b=>b.onclick=()=>{setSide(false);location.hash='#/task/'+encodeURIComponent(b.dataset.ref)});
 }
-
 async function loadTasks(){
   if(!token||listBusy)return;listBusy=true;
   try{tasks=await api('/tasks');renderList()}
-  catch(err){$('taskList').innerHTML='<div class="empty">'+esc(err.message)+'</div>'}
+  catch(err){$('taskList').innerHTML='<div class="hint" style="padding:12px">'+esc(err.message)+'</div>'}
   finally{listBusy=false;clearTimeout(listTimer);listTimer=setTimeout(loadTasks,5000)}
 }
 
-function openTask(ref){selectedRef=ref;showView('detail');renderList();loadDetail();}
-
+/* ---------- task detail: thread, activity, checkpoint, banner ---------- */
 async function loadDetail(){
   if(!selectedRef||detailBusy)return;detailBusy=true;
+  const ref=encodeURIComponent(selectedRef);
   try{
-    const t=await api('/tasks/'+encodeURIComponent(selectedRef));
-    renderDetail(t);
-  }catch(err){$('dErr').textContent=err.message}
-  finally{detailBusy=false;clearTimeout(detailTimer);
-    if(selectedRef)detailTimer=setTimeout(loadDetail,3000)}
-}
-
-function renderDetail(t){
-  $('emptyDetail').classList.add('hidden');$('detail').classList.remove('hidden');
-  $('dTitle').textContent=t.instruction;
-  $('dSlug').textContent=t.slug||t.id;
-  const st=$('dStatus');st.className='pill '+t.status;st.textContent=label(t.status);
-  const running=['queued','running','recovering','waiting_human'].includes(t.status);
-  const bar=$('dBar');bar.classList.toggle('indet',running&&t.status!=='waiting_human');
-  bar.firstElementChild.style.width=t.status==='completed'?'100%':(t.status==='waiting_human'?'60%':'');
-  $('dProgress').textContent=t.progress||(running?'Waiting for the agent…':'');
-  $('dErr').textContent=t.error?('Error: '+t.error):'';
-  $('cancelBtn').disabled=!running||t.cancel_requested;
-  $('cancelBtn').textContent=t.cancel_requested?'Cancelling…':'Cancel task';
-  $('retryBtn').disabled=!(t.status==='failed'||t.status==='cancelled');
-  const paused=t.status==='waiting_human';
-  $('pauseBanner').classList.toggle('hidden',!paused);
-  if(paused){$('pauseText').textContent=(t.human_help||'Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.')}
-  $('resumeBtn').disabled=!paused;
-  $('dKv').innerHTML=[
-    ['Task ID',t.id],['Created',fmtTime(t.created_at)],['Updated',fmtTime(t.updated_at)],
-    ['Provider',t.provider||'auto'],['Model',t.model||'default'],['Proxy',t.proxy_mode==='configured'?'configured ('+(t.proxy_identifier||'')+')':'direct'],
-    ['Recovery count',String(t.recovery_count||0)],
-  ].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
-  const cp=t.checkpoint;
-  $('cKv').innerHTML=[
-    ['State',t.status==='waiting_human'?'paused, waiting for human':(running?'active':'idle')],
-    ['Checkpoint',cp?'saved':'none'],
-    ['Recoveries',String(t.recovery_count||0)],
-    ['Waiting details',t.waiting_details?JSON.stringify(t.waiting_details):'none'],
-  ].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
-  $('dResult').textContent=t.result||(t.status==='completed'?'(no result text)':'No result yet.');
-  $('resultCard').classList.toggle('hidden',!t.result&&!['completed','failed','cancelled'].includes(t.status));
-  $('browserCard').classList.toggle('hidden',!paused&&!$('shot').src);
-  if(paused&&!$('shot').src)refreshShot();
-  loadLogs();
+    const [t,m]=await Promise.all([api('/tasks/'+ref),api('/tasks/'+ref+EP.messages)]);
+    if(selectedRef!==decodeURIComponent(ref))return;
+    detail=t;msgs=m;
+    if(logsOpen){await loadLogs()}else{logsList=t.logs||[]}
+    renderTask();
+    if(t.status==='waiting_human'&&!shotUrl&&$('filesPanel').classList.contains('open'))refreshShot();
+  }catch(err){$('taskErr').textContent=err.message;$('taskErr').className='err'}
+  finally{detailBusy=false;clearTimeout(detailTimer);if(selectedRef)detailTimer=setTimeout(loadDetail,3000)}
 }
 
 async function loadLogs(){
   if(!selectedRef)return;
-  try{
-    const d=await api('/tasks/'+encodeURIComponent(selectedRef)+'/logs');
-    const logs=d.logs||[];
-    $('logs').innerHTML=logs.length?logs.slice().reverse().map(l=>'<div class="log"><span class="ts">'+esc(fmtTime(l.created_at))+'</span><span class="lv '+esc(l.level)+'">'+esc(l.level)+'</span><span>'+esc(l.message)+'</span></div>').join(''):'<div class="empty" style="padding:14px">No logs yet.</div>';
-  }catch(err){$('logs').innerHTML='<div class="err">'+esc(err.message)+'</div>'}
+  try{const d=await api('/tasks/'+encodeURIComponent(selectedRef)+EP.logs);logsList=d.logs||[]}
+  catch(err){logsList=[]}
 }
+
+function bubble(text){return '<div class="bubble">'+esc(text)+'</div>'}
+function agentBlock(text,kind){return '<div class="'+(kind==='sys'?'sys':'agent')+'">'+esc(text)+'</div>'}
+
+function activityHTML(t){
+  const s=secsOf(t);
+  let txt;
+  if(t.status==='queued')txt='Queued';
+  else if(t.status==='running'||t.status==='recovering')txt='Working for '+dur(s);
+  else if(t.status==='waiting_human')txt='Paused for verification after '+dur(s);
+  else if(t.status==='completed')txt='Worked for '+dur(s);
+  else txt=label(t.status)[0].toUpperCase()+label(t.status).slice(1)+' after '+dur(s);
+  let html='<button class="activity" type="button" data-act="toggle" aria-expanded="'+(logsOpen?'true':'false')+'">'+esc(txt)+
+    ' <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg></button>';
+  if(logsOpen){
+    const cp=t.checkpoint;
+    html+='<div class="actpanel"><h4>Checkpoint &amp; resume</h4><div class="kv">'+
+      [['State',t.status==='waiting_human'?'paused, waiting for human':(RUN.includes(t.status)?'active':'idle')],
+       ['Checkpoint',cp?'saved':'none'],['Recoveries',String(t.recovery_count||0)],
+       ['Waiting details',t.waiting_details?JSON.stringify(t.waiting_details):'none']]
+      .map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('')+'</div>'+
+      '<h4>Logs</h4><div class="logs">'+(logsList.length?logsList.map(l=>'<div class="log"><span class="ts">'+esc(fmtTime(l.created_at))+'</span><span class="lv '+esc(l.level)+'">'+esc(l.level)+'</span><span>'+esc(l.message)+'</span></div>').join(''):'<div class="hint">No logs yet.</div>')+'</div></div>';
+  }
+  return html;
+}
+
+function renderTask(){
+  const t=detail;if(!t)return;
+  $('topTitle').textContent=t.instruction;$('topTitle').title=t.instruction;
+  const st=$('dStatus');st.className='pill '+t.status;st.textContent=label(t.status);
+  const cp=t.checkpoint;
+  $('ckText').textContent=cp?'Checkpoint saved':'No checkpoint';
+  $('cancelBtn').disabled=!RUN.includes(t.status)||t.cancel_requested;
+  $('cancelBtn').textContent=t.cancel_requested?'Cancelling…':'Cancel task';
+  $('retryBtn').disabled=!(t.status==='failed'||t.status==='cancelled');
+  const paused=t.status==='waiting_human';
+  $('pauseBanner').classList.toggle('hidden',!paused);
+  if(paused)$('pauseText').textContent=t.human_help||'Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.';
+  $('resumeBtn').disabled=!paused;
+  const costEl=$('costLabel');
+  if(typeof t.cost_usd==='number'){costEl.textContent='$'+t.cost_usd.toFixed(2);costEl.classList.remove('hidden')}else{costEl.classList.add('hidden')}
+  $('taskModel').innerHTML='<option>'+esc((t.provider||'auto')+' · '+(t.model||'default'))+'</option>';
+  $('taskProv').textContent=(t.provider||'A').charAt(0).toUpperCase();
+  const inner=$('threadInner');const thread=$('thread');
+  const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<140;
+  const parts=[bubble(t.instruction),activityHTML(t)];
+  msgs.forEach(m=>{
+    if(m.role==='user')parts.push(bubble(m.content));
+    else parts.push(agentBlock(m.content,m.role==='system'?'sys':'agent'));
+  });
+  if(t.result)parts.push(agentBlock(t.result));
+  if(t.error)parts.push('<div class="err" style="align-self:flex-start">'+esc('Error: '+t.error)+'</div>');
+  inner.innerHTML=parts.join('');
+  if(nearBottom)thread.scrollTop=thread.scrollHeight;
+}
+
+document.getElementById('thread').addEventListener('click',e=>{
+  const b=e.target.closest('[data-act="toggle"]');
+  if(!b)return;
+  logsOpen=!logsOpen;
+  if(logsOpen)loadLogs().then(renderTask);else renderTask();
+});
 
 async function refreshShot(){
   if(!selectedRef)return;
   try{
-    const r=await fetch('/tasks/'+encodeURIComponent(selectedRef)+'/screenshot',{headers:{'Authorization':'Bearer '+token},cache:'no-store'});
+    const r=await fetch('/tasks/'+encodeURIComponent(selectedRef)+EP.shot,{headers:{'Authorization':'Bearer '+token},cache:'no-store'});
     if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||'Browser view unavailable')}
     const blob=await r.blob();if(shotUrl)URL.revokeObjectURL(shotUrl);shotUrl=URL.createObjectURL(blob);
     $('shot').src=shotUrl;$('shot').classList.remove('hidden');$('shotMsg').textContent='Refreshed.';
   }catch(err){$('shot').classList.add('hidden');$('shotMsg').textContent=err.message}
 }
-$('shotBtn').onclick=refreshShot;
 
 async function action(kind){
   if(!selectedRef)return;
   try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/'+kind,{method:'POST'});await loadDetail();await loadTasks()}
-  catch(err){$('dErr').textContent=err.message}
+  catch(err){$('taskErr').textContent=err.message;$('taskErr').className='err'}
 }
 $('resumeBtn').onclick=async()=>{
   $('resumeBtn').disabled=true;
-  try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/resume',{method:'POST'});$('pauseText').textContent='Resume sent. Phoenix is continuing.';await loadDetail()}
+  try{await api('/tasks/'+encodeURIComponent(selectedRef)+EP.resume,{method:'POST'});$('pauseText').textContent='Resume sent. Phoenix is continuing.';await loadDetail()}
   catch(err){$('pauseText').textContent=err.message;$('resumeBtn').disabled=false}
 };
 $('cancelBtn').onclick=()=>action('cancel');
 $('retryBtn').onclick=()=>action('retry');
 
+/* ---------- task composer: posts a message to the thread ---------- */
+function syncTaskSend(){$('sendMsgBtn').disabled=!$('composer').value.trim();$('sendMsgBtn').classList.toggle('ready',!$('sendMsgBtn').disabled)}
+$('composer').addEventListener('input',syncTaskSend);
+$('composer').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('sendMsgBtn').click()}});
 $('sendMsgBtn').onclick=async()=>{
   const c=$('composer').value.trim();if(!c||!selectedRef)return;
   $('sendMsgBtn').disabled=true;
-  try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/messages',{method:'POST',body:JSON.stringify({content:c})});$('composer').value='';$('msgStatus').textContent='Message saved.'}
-  catch(err){$('msgStatus').textContent=err.message}
-  finally{$('sendMsgBtn').disabled=false}
+  try{
+    await api('/tasks/'+encodeURIComponent(selectedRef)+EP.messages,{method:'POST',body:JSON.stringify({content:c})});
+    $('composer').value='';$('msgStatus').textContent='';
+    await loadDetail();
+  }catch(err){$('msgStatus').textContent=err.message}
+  finally{syncTaskSend()}
 };
 
-async function loadModelsAndProxy(){
+/* ---------- home composer: creates a task, then routes to its view ---------- */
+function homeSync(){$('homeSubmit').disabled=$('homeInstruction').value.trim().length<3;$('homeSubmit').classList.toggle('ready',!$('homeSubmit').disabled)}
+$('homeInstruction').addEventListener('input',homeSync);
+$('homeInstruction').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('homeSubmit').click()}});
+$('homeFast').onclick=()=>{cfg.fast=!cfg.fast;$('homeFast').classList.toggle('on',cfg.fast);$('homeFast').setAttribute('aria-pressed',String(cfg.fast))};
+$('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
+$('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
+$('homeSubmit').onclick=async()=>{
+  $('homeErr').textContent='';
+  const instruction=$('homeInstruction').value.trim();
+  if(instruction.length<3){$('homeErr').textContent='Describe the task (at least 3 characters).';return}
+  const [provider,model]=cfg.model.split('|');
+  const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
+  if(model)body.model=model;
+  const su=$('startUrl').value.trim();if(su)body.start_url=su;
+  const to=$('timeout').value.trim();if(to)body.timeout_seconds=Number(to);
+  $('homeSubmit').disabled=true;
   try{
-    const models=await api('/models');
-    const list=Array.isArray(models)?models:(models.models||[]);
-    const ids=list.map(m=>typeof m==='string'?m:(m.id||m.name||'')).filter(Boolean);
-    $('model').innerHTML='<option value="">Default model</option>'+ids.map(id=>'<option value="'+esc(id)+'">'+esc(id)+'</option>').join('');
-    $('modelsInfo').innerHTML=ids.length?'<div class="chips">'+ids.map(id=>'<span class="chip">'+esc(id)+'</span>').join('')+'</div>':'No models returned by the server.';
-  }catch(err){$('model').innerHTML='<option value="">Default model (catalog unavailable)</option>';$('modelsInfo').textContent=err.message}
+    const t=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
+    $('homeInstruction').value='';homeSync();
+    await loadTasks();
+    location.hash='#/task/'+encodeURIComponent(t.slug||t.id);
+  }catch(err){$('homeErr').textContent=err.message;homeSync()}
+};
+
+/* ---------- models: from this server's /models (Phoenix providers) ---------- */
+function updateProv(){
+  const c=catalog.find(x=>x.value===cfg.model);
+  const letter=c?c.provLabel.charAt(0).toUpperCase():'A';
+  $('homeProv').textContent=letter;$('taskProv').textContent=letter;
+}
+function fillModelSelect(sel){
+  const groups={};
+  catalog.forEach(c=>{(groups[c.provLabel]=groups[c.provLabel]||[]).push(c)});
+  sel.innerHTML=Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(c=>'<option value="'+esc(c.value)+'"'+(c.value===cfg.model?' selected':'')+'>'+esc(c.label)+'</option>').join('')+'</optgroup>').join('');
+}
+async function loadCatalog(){
+  try{
+    const d=await api('/models');
+    const provs=d.providers||[];
+    catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
+    provs.forEach(p=>{
+      if(p.id==='auto'||!p.available)return;
+      (p.models||[]).forEach(m=>{if(m.id)catalog.push({value:p.id+'|'+m.id,label:m.label||m.id,prov:p.id,provLabel:p.label||p.id})});
+    });
+    const preferred=d.default_provider&&d.default_model?d.default_provider+'|'+d.default_model:null;
+    if(preferred&&catalog.some(c=>c.value===preferred)&&cfg.model==='auto|')cfg.model=preferred;
+    const offline=provs.filter(p=>!p.available).map(p=>p.label+' unavailable'+(p.error?' ('+p.error+')':''));
+    $('modelsInfo').innerHTML=catalog.length>1
+      ?'<div class="chips">'+catalog.filter(c=>c.value!=='auto|').map(c=>'<span class="chip">'+esc(c.label)+'</span>').join('')+'</div>'+(offline.length?'<div class="hint">'+esc(offline.join('; '))+'</div>':'')
+      :'No models returned by the server.'+(offline.length?' '+esc(offline.join('; ')):'');
+  }catch(err){
+    catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
+    $('modelsInfo').textContent=err.message;
+  }
+  fillModelSelect($('homeModel'));
+  updateProv();
+}
+async function loadSettings(){
   try{
     const p=await api('/proxy/status');
     $('proxyKv').innerHTML=[['Mode',p.mode],['Configured',p.configured?'yes':'no'],['Identifier',p.identifier||'none'],['Credentials',p.credentials_configured?'set':'not set']].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
   }catch(err){$('proxyKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
-}
-
-async function loadSettings(){
   try{
     const r=await api('/runtime/status');
     const b=r.browser||{};const res=r.resources||{};
@@ -465,28 +674,10 @@ async function loadSettings(){
   }catch(err){$('runtimeKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
 }
 
-$('createBtn').onclick=async()=>{
-  $('createErr').textContent='';
-  const instruction=$('instruction').value.trim();
-  if(instruction.length<3){$('createErr').textContent='Describe the task (at least 3 characters).';return}
-  const body={instruction,provider:$('provider').value,proxy_mode:$('proxyMode').value};
-  const su=$('startUrl').value.trim();if(su)body.start_url=su;
-  const to=$('timeout').value.trim();if(to)body.timeout_seconds=Number(to);
-  const m=$('model').value;if(m)body.model=m;
-  $('createBtn').disabled=true;
-  try{
-    const t=await api('/tasks',{method:'POST',body:JSON.stringify(body)});
-    $('instruction').value='';$('startUrl').value='';$('timeout').value='';
-    await loadTasks();
-    openTask(t.slug||t.id);
-  }catch(err){$('createErr').textContent=err.message}
-  finally{$('createBtn').disabled=false}
-};
-
 function startApp(){
-  showApp();showView('detail');
-  loadTasks();loadModelsAndProxy();
-  if(selectedRef)loadDetail();
+  showApp();
+  loadCatalog();
+  route();
 }
 
 if(token){startApp()}else{showAuth()}
