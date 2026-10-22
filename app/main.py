@@ -493,6 +493,11 @@ def _waiting_browser(task_ref, user):
 
 @app.get('/tasks/{task_ref}/screenshot')
 async def task_screenshot(task_ref: str, user=Depends(current_user)):
+    from app.browser_use_adapter import latest_frame
+    item = _task_for_user(task_ref, user)
+    frame = latest_frame(item['id'])
+    if frame is not None:
+        return Response(content=frame, media_type='image/png', headers={'Cache-Control':'no-store'})
     _, page = _waiting_browser(task_ref, user)
     try:
         image = await page.screenshot(type='png')

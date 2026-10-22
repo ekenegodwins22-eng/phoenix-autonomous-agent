@@ -12,7 +12,7 @@ def test_runner_dispatches_to_browser_use_only_when_configured(monkeypatch):
 
     calls = []
 
-    async def fake_execute(*args):
+    async def fake_execute(*args, **kwargs):
         calls.append(args)
         return '{"engine":"browser_use"}'
 

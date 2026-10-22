@@ -117,6 +117,32 @@ def phoenix_agent_instructions() -> str:
     return effective
 
 
+# Latest PNG captured from the vendored engine's live browser session, keyed by task id.
+# Served by GET /tasks/{ref}/screenshot while the agent is browsing.
+_latest_frames: dict[str, bytes] = {}
+
+
+def latest_frame(task_id: str) -> bytes | None:
+    return _latest_frames.get(task_id)
+
+
+def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
+    """Map owner browser settings (console Browser tab) onto browser-use's BrowserProfile."""
+    from app import run_options as run_opts
+    bopts = run_opts.current().get('browser') or {}
+    headless = bopts.get('headless') if bopts.get('headless') is not None else settings.browser_headless
+    kwargs: dict = {'headless': bool(headless)}
+    if bopts.get('viewport_width') and bopts.get('viewport_height'):
+        kwargs['viewport'] = {'width': int(bopts['viewport_width']), 'height': int(bopts['viewport_height'])}
+    if bopts.get('user_agent'):
+        kwargs['user_agent'] = str(bopts['user_agent'])
+    proxy = configured_proxy() if proxy_mode == 'configured' else None
+    if proxy:
+        from browser_use.browser.profile import ProxySettings
+        kwargs['proxy'] = ProxySettings(server=proxy['server'], username=proxy.get('username'), password=proxy.get('password'))
+    return kwargs
+
+
 async def execute_browser_use_task(
     instruction: str,
     start_url: str | None = None,
@@ -124,27 +150,46 @@ async def execute_browser_use_task(
     model: str | None = None,
     progress=None,
     cancel_event=None,
+    proxy_mode: str = 'direct',
+    task_id: str | None = None,
 ):
     """Run the vendored browser-use Agent inside Phoenix's task wrapper."""
     if not browser_use_available():
         raise BrowserUseUnavailable('Browser Use is not installed in this Phoenix image')
     from browser_use import Agent, BrowserSession
-    from browser_use.browser.profile import BrowserProfile, ProxySettings
+    from browser_use.browser.profile import BrowserProfile
+    from app import run_options as run_opts
 
-    proxy = configured_proxy()
-    profile_kwargs = {'headless': settings.browser_headless}
-    if proxy:
-        profile_kwargs['proxy'] = ProxySettings(
-            server=proxy['server'], username=proxy.get('username'), password=proxy.get('password'))
-    session = BrowserSession(browser_profile=BrowserProfile(**profile_kwargs))
+    opts = run_opts.current()
+    session = BrowserSession(browser_profile=BrowserProfile(**_browser_profile_kwargs(proxy_mode)))
     task = instruction if not start_url else f'{instruction}\nStart at this URL: {start_url}'
     llm = PhoenixRouterChatModel(provider=provider, model=model)
+    system_extension = phoenix_agent_instructions()
+    owner_prompt = (opts.get('system_prompt') or '').strip()
+    if owner_prompt:
+        system_extension = f"{system_extension}\n\nOwner instructions for this agent:\n{owner_prompt}"
+    max_steps = int(opts.get('max_steps') or settings.max_agent_steps)
 
     async def should_stop():
         # Phoenix's cancel/stop boundary is honored between agent steps.
         return bool(cancel_event and cancel_event.is_set())
 
+    async def capture(agent):
+        if not task_id:
+            return
+        try:
+            frame = await session.take_screenshot(format='png')
+            if frame:
+                _latest_frames[task_id] = bytes(frame)
+        except Exception:
+            # No live page yet (or the session is closing); keep the previous frame.
+            pass
+
+    async def on_step_start(agent):
+        await capture(agent)
+
     async def on_step_end(agent):
+        await capture(agent)
         if progress:
             await progress(f'Browser Use verified step {getattr(agent.state, "n_steps", "")}'.strip())
 
@@ -152,15 +197,16 @@ async def execute_browser_use_task(
         task=task,
         llm=llm,
         browser_session=session,
-        extend_system_message=phoenix_agent_instructions(),
+        extend_system_message=system_extension,
         max_failures=settings.model_action_retries + 1,
         enable_signal_handler=False,
         register_should_stop_callback=should_stop,
         source='phoenix',
     )
     try:
-        history = await agent.run(max_steps=settings.max_agent_steps, on_step_end=on_step_end)
+        history = await agent.run(max_steps=max_steps, on_step_start=on_step_start, on_step_end=on_step_end)
         return json.dumps({'summary': history.final_result() or 'Browser Use task completed.',
                            'engine': 'browser_use', 'verified': True}, ensure_ascii=False)
     finally:
+        _latest_frames.pop(task_id, None) if task_id else None
         await session.stop()

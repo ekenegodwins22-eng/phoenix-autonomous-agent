@@ -287,7 +287,7 @@ label.lab:first-child{margin-top:0}
         <span id="pauseText">Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.</span>
         <div class="row"><button class="btn small primary" id="resumeBtn" type="button">I've completed verification, resume</button></div>
       </div>
-      <section class="hero" id="heroBrowser" aria-label="Live browser view">
+      <section class="hero hidden" id="heroBrowser" aria-label="Live browser view">
         <div class="hero-bar">
           <span class="hero-dot" id="heroDot"></span>
           <span class="hero-ref" id="heroRef">browser</span>
@@ -522,7 +522,7 @@ function stopTimers(){clearTimeout(detailTimer);clearTimeout(listTimer);stopHero
 /* ---------- live browser hero: polls the existing screenshot endpoint ---------- */
 let heroUrl=null,heroInterval=null,heroBusy=false,heroFor=null;
 function stopHero(){if(heroInterval){clearInterval(heroInterval);heroInterval=null}}
-function resetHero(){stopHero();heroFor=null;if(heroUrl){URL.revokeObjectURL(heroUrl);heroUrl=null}$('heroShot').removeAttribute('src');$('heroShot').classList.add('hidden');$('heroEmpty').classList.remove('hidden');$('heroEmpty').textContent='Waiting for the browser...';$('heroState').textContent=''}
+function resetHero(){stopHero();heroFor=null;if(heroUrl){URL.revokeObjectURL(heroUrl);heroUrl=null}$('heroShot').removeAttribute('src');$('heroShot').classList.add('hidden');$('heroBrowser').classList.add('hidden');$('heroState').textContent=''}
 async function refreshHero(){
   const ref=selectedRef;if(!ref||!token||heroBusy)return;heroBusy=true;
   try{
@@ -531,11 +531,11 @@ async function refreshHero(){
     if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||'Browser view unavailable')}
     const blob=await r.blob();if(selectedRef!==ref)return;
     const next=URL.createObjectURL(blob);if(heroUrl)URL.revokeObjectURL(heroUrl);heroUrl=next;
-    $('heroShot').src=heroUrl;$('heroShot').classList.remove('hidden');$('heroEmpty').classList.add('hidden');
+    $('heroShot').src=heroUrl;$('heroShot').classList.remove('hidden');$('heroEmpty').classList.add('hidden');$('heroBrowser').classList.remove('hidden');
     heroFor=ref;
   }catch(err){
     if(selectedRef!==ref)return;
-    if(!heroUrl){$('heroShot').classList.add('hidden');$('heroEmpty').classList.remove('hidden');$('heroEmpty').textContent=err.message}
+    if(!heroUrl){$('heroShot').classList.add('hidden');$('heroBrowser').classList.add('hidden')}
   }finally{heroBusy=false}
 }
 function syncHero(){
@@ -544,7 +544,7 @@ function syncHero(){
   $('heroRef').textContent=selectedRef;$('heroRef').title=selectedRef;
   $('heroDot').classList.toggle('live',active);
   $('heroState').textContent=label(t.status);
-  if(active){if(!heroInterval)heroInterval=setInterval(refreshHero,2000)}
+  if(active){if(!heroInterval)heroInterval=setInterval(refreshHero,2000);refreshHero()}
   else{stopHero();if(heroFor!==selectedRef)refreshHero()}
 }
 

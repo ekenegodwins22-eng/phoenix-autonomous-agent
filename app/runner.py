@@ -308,7 +308,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
             if match: url = match.group(0).rstrip('.,')
         if url and not valid_url(url):
             raise TaskBlocked('Invalid start URL: use http or https.')
-        result = await execute_browser_use_task(instruction, url, provider_choice, model, progress, cancel_event)
+        result = await execute_browser_use_task(instruction, url, provider_choice, model, progress, cancel_event, proxy_mode=proxy_mode, task_id=task_id)
         if save_checkpoint:
             await save_checkpoint({'engine': 'browser_use', 'phase': 'done', 'verified': False, 'summary': 'Browser Use agent returned a result; outcome not independently verified by Phoenix.'})
         return result
