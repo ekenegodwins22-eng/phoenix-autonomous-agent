@@ -50,7 +50,8 @@ async def recover_tasks_on_startup():
 
 @app.get("/", include_in_schema=False)
 async def root():
-    return FileResponse(Path(__file__).parent / "static" / "index.html", headers={'Cache-Control': 'no-cache'})
+    """Root serves the console UI. The old root page is parked at static/legacy/index-make-the-next-move.html."""
+    return FileResponse(Path(__file__).parent / "static" / "console.html", headers={'Cache-Control': 'no-cache'})
 
 @app.get("/console", include_in_schema=False)
 async def console():

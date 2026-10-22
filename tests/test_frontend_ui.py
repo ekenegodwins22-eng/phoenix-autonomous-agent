@@ -5,7 +5,7 @@ ROOT = Path(__file__).parents[1]
 
 
 def test_home_ui_has_authenticated_recent_run_activity():
-    html = (ROOT / 'app' / 'static' / 'index.html').read_text()
+    html = (ROOT / 'app' / 'static' / 'legacy' / 'index-make-the-next-move.html').read_text()
     assert 'Continue where you left off' in html
     assert 'id="recentRuns"' in html
     assert 'async function loadRecentTasks' in html

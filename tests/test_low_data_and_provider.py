@@ -48,7 +48,7 @@ def test_model_discovery_retries_a_transient_timeout(monkeypatch):
 
 
 def test_frontends_use_adaptive_polling_and_stop_at_terminal_states():
-    for name in ('index.html', 'task.html'):
+    for name in ('legacy/index-make-the-next-move.html', 'task.html'):
         content = (Path(__file__).parents[1] / 'app' / 'static' / name).read_text()
         assert 'setInterval' not in content
         assert 'navigator.onLine' in content
