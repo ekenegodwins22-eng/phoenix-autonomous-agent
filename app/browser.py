@@ -1,3 +1,4 @@
+from app import run_options as run_opts
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -25,7 +26,9 @@ class SingleBrowser:
                 if not installation.get('available'):
                     raise RuntimeError(f"Playwright Chromium unavailable: {installation.get('error', 'unknown installation error')}")
                 pw = await async_playwright().start()
-                launch_options = {'headless': settings.browser_headless, 'args': [
+                bopts = run_opts.current().get('browser') or {}
+                headless = bopts.get('headless') if bopts.get('headless') is not None else settings.browser_headless
+                launch_options = {'headless': headless, 'slow_mo': int(bopts.get('slow_mo_ms') or 0), 'args': [
                     "--disable-dev-shm-usage", "--disable-background-networking",
                     "--disable-extensions", "--disable-sync", "--no-first-run",
                     "--no-default-browser-check", "--disable-gpu",
@@ -33,7 +36,10 @@ class SingleBrowser:
                 if proxy:
                     launch_options['proxy'] = {key: value for key, value in proxy.items() if key in {'server', 'username', 'password'} and value}
                 browser = await pw.chromium.launch(**launch_options)
-                context = await browser.new_context(viewport={"width": 1280, "height": 800}, accept_downloads=True)
+                context_options = {"viewport": {"width": int(bopts.get('viewport_width') or 1280), "height": int(bopts.get('viewport_height') or 800)}, "accept_downloads": True}
+                if bopts.get('user_agent'):
+                    context_options['user_agent'] = str(bopts['user_agent'])
+                context = await browser.new_context(**context_options)
                 page = await context.new_page()
                 self.current_page = page
                 self.current_context = context

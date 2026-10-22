@@ -53,7 +53,7 @@ def _connect():
     CREATE INDEX IF NOT EXISTS idx_task_files_task ON task_files(task_id, id);
     """.replace('__TASK_LOG_ID__', task_log_id).replace('__TASK_MESSAGE_ID__', task_log_id)
     conn.executescript(schema)
-    for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT"), ("effort", "TEXT"), ("attachment_count", "INTEGER NOT NULL DEFAULT 0")):
+    for column, definition in (("proxy_mode", "TEXT NOT NULL DEFAULT 'direct'"), ("proxy_identifier", "TEXT"), ("effort", "TEXT"), ("attachment_count", "INTEGER NOT NULL DEFAULT 0"), ("fast_mode", "INTEGER NOT NULL DEFAULT 0"), ("deep_research", "INTEGER NOT NULL DEFAULT 0")):
         if using_postgres():
             # IF NOT EXISTS avoids a duplicate-column error from concurrent
             # web/worker startup migrations aborting the PostgreSQL transaction.
@@ -72,6 +72,8 @@ def _decode(row):
     item = dict(row)
     item['waiting_details'] = json.loads(item['waiting_details']) if item.get('waiting_details') else None
     item['cancel_requested'] = bool(item.get('cancel_requested'))
+    item['fast_mode'] = bool(item.get('fast_mode'))
+    item['deep_research'] = bool(item.get('deep_research'))
     return item
 
 
@@ -80,12 +82,12 @@ def _slug(instruction: str, task_id: str) -> str:
     return f'{words}-{task_id[:6]}'
 
 
-def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None, effort: str | None = None) -> dict:
+def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None, effort: str | None = None, fast_mode: bool = False, deep_research: bool = False) -> dict:
     task_id = secrets.token_hex(8)
     slug = _slug(instruction, task_id)
     now = _now()
     with _connect() as conn:
-        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier,effort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier,effort))
+        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier,effort,fast_mode,deep_research) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier,effort,int(bool(fast_mode)),int(bool(deep_research))))
         conn.execute("INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)", (task_id,now,'info','Task accepted and queued.'))
         conn.commit()
     return get_task(task_id)
@@ -328,3 +330,68 @@ def recover_waiting_on_restart() -> list[str]:
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', 'Worker restart detected while paused; no safe checkpoint, so the task was stopped.'))
         conn.commit()
     return ids
+
+
+def usage_stats(owner_id: int) -> dict:
+    """Phoenix-native usage: task counts, runtime and uploaded file totals for one owner."""
+    with _connect() as conn:
+        rows = conn.execute('SELECT status, created_at, updated_at, fast_mode, deep_research FROM tasks WHERE owner_id=?', (owner_id,)).fetchall()
+        files = conn.execute('SELECT COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes FROM task_files WHERE owner_id=?', (owner_id,)).fetchone()
+    now = datetime.now(timezone.utc)
+    by_status: dict[str, int] = {}
+    runtime = 0.0
+    fast = deep = 0
+    for row in rows:
+        by_status[row['status']] = by_status.get(row['status'], 0) + 1
+        try:
+            start = datetime.fromisoformat(str(row['created_at']))
+            end = now if row['status'] in ('queued', 'running', 'recovering', 'waiting_human') else datetime.fromisoformat(str(row['updated_at']))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            runtime += max(0.0, (end - start).total_seconds())
+        except (TypeError, ValueError):
+            pass
+        fast += int(bool(row['fast_mode']))
+        deep += int(bool(row['deep_research']))
+    return {
+        'total_tasks': len(rows),
+        'by_status': by_status,
+        'completed': by_status.get('completed', 0),
+        'failed': by_status.get('failed', 0),
+        'active': sum(by_status.get(k, 0) for k in ('queued', 'running', 'recovering', 'waiting_human')),
+        'runtime_seconds': round(runtime, 1),
+        'fast_mode_tasks': fast,
+        'deep_research_tasks': deep,
+        'files': int(files['n'] or 0),
+        'file_bytes': int(files['bytes'] or 0),
+    }
+
+
+def usage_stats(owner_id: int) -> dict:
+    """Real Phoenix-native usage stats for one owner, computed from the tasks table."""
+    with connect() as conn:
+        rows = conn.execute("SELECT status, fast_mode, deep_research, created_at, updated_at FROM tasks WHERE owner_id=?", (owner_id,)).fetchall()
+        files = conn.execute("SELECT COUNT(*) AS n FROM task_files WHERE owner_id=?", (owner_id,)).fetchone()
+    from datetime import datetime as _dt
+    runtime = 0
+    completed = failed = active = 0
+    deep = fast = 0
+    for r in rows:
+        if r['status'] == 'completed': completed += 1
+        elif r['status'] in ('failed', 'cancelled'): failed += 1
+        else: active += 1
+        if r['fast_mode']: fast += 1
+        if r['deep_research']: deep += 1
+        try:
+            runtime += max(0, int((_dt.fromisoformat(r['updated_at']) - _dt.fromisoformat(r['created_at'])).total_seconds()))
+        except Exception:
+            pass
+    return {'total_tasks': len(rows), 'completed': completed, 'failed': failed, 'active': active,
+            'runtime_seconds': runtime, 'deep_research_tasks': deep, 'fast_mode_tasks': fast,
+            'files': int(files['n']) if files else 0}
+
+
+def _has_table(conn, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None

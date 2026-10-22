@@ -44,6 +44,11 @@ svg{display:block;flex-shrink:0}
 .ib.on{color:var(--pumpkin);background:rgba(254,117,14,.1)}
 .balance{height:38px;display:inline-flex;align-items:center;gap:8px;padding:0 14px;border:1px solid var(--line-2);border-radius:9999px;color:var(--copy);font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .balance svg{color:var(--copy-2)}
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line-2)}
+.tab{background:none;border:0;padding:8px 10px;color:var(--copy-2);cursor:pointer;font-size:14px;border-bottom:2px solid transparent}
+.tab.on{color:var(--copy);border-bottom-color:var(--copy)}
+.tabpane{display:none}.tabpane.on{display:block}
+.ib.round.on{background:var(--line-2)}
 .ghost{height:36px;display:inline-flex;align-items:center;gap:7px;padding:0 13px;border:1px solid var(--line-2);border-radius:9999px;background:transparent;color:var(--copy);font-size:14px;white-space:nowrap}
 .ghost:hover{background:var(--surface-2)}
 .body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
@@ -180,9 +185,9 @@ label.lab:first-child{margin-top:0}
     </button>
     <h2 class="top-title hidden" id="topTitle"></h2>
     <div class="row-gap" id="homeRight">
-      <span class="balance" title="Balance is not exposed by this server yet">
+      <span class="balance" id="usagePill" title="Phoenix task usage">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 9.2c-.5-.9-1.5-1.4-2.6-1.4-1.6 0-2.7.9-2.7 2.1 0 2.8 5.6 1.4 5.6 4.1 0 1.2-1.2 2.1-2.8 2.1-1.2 0-2.2-.5-2.7-1.4M12 6.5v1.4M12 16.1v1.4"/></svg>
-        <span>$<span id="balance">--</span></span>
+        <span id="balance">--</span>
       </span>
       <button class="ib" id="keyBtn" type="button" aria-label="Models and proxy" title="Models and proxy">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/></svg>
@@ -239,7 +244,10 @@ label.lab:first-child{margin-top:0}
               </select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
-            <button class="ib round" id="homeFast" type="button" hidden aria-label="Fast mode">
+            <button class="ib round" id="homeDeep" type="button" aria-pressed="false" aria-label="Deep research" title="Deep research: longer run, structured report">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </button>
+            <button class="ib round" id="homeFast" type="button" aria-pressed="false" aria-label="Fast mode" title="Fast mode: single-pass action selection">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
             </button>
             <button class="send" id="homeSubmit" type="button" aria-label="Start task" disabled>
@@ -285,7 +293,7 @@ label.lab:first-child{margin-top:0}
               <select id="taskEffort" aria-label="Effort"><option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
-            <button class="ib round" id="taskFast" type="button" hidden aria-label="Fast mode">
+            <button class="ib round" id="taskFast" type="button" aria-pressed="false" aria-label="Fast mode" title="Fast mode for the next task" hidden>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
             </button>
             <span class="cost hidden" id="costLabel"></span>
@@ -307,6 +315,7 @@ label.lab:first-child{margin-top:0}
       <div class="sect">
         <h4>Artifacts</h4>
         <div id="artifactList" class="hint" style="margin:0">Open a task to see its files.</div>
+        <div class="row" style="display:flex;gap:8px;margin-top:10px"><button class="btn small" id="artifactsRefresh" type="button">Refresh files</button></div>
       </div>
       <div class="sect">
         <h4>Remote browser</h4>
@@ -321,10 +330,17 @@ label.lab:first-child{margin-top:0}
   </aside>
 
   <!-- SETTINGS: models, proxy, runtime (slide-over opened from the sliders and key buttons) -->
-  <aside class="panel" id="settingsPanel" aria-label="Models and proxy">
-    <div class="panel-head"><h3>Models &amp; proxy</h3><button class="ib" type="button" data-close aria-label="Close">
+  <aside class="panel" id="settingsPanel" aria-label="Settings">
+    <div class="panel-head"><h3>Settings</h3><button class="ib" type="button" data-close aria-label="Close">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="panel-body">
+      <div class="tabs" role="tablist">
+        <button class="tab on" type="button" role="tab" data-tab="run" aria-selected="true">Run</button>
+        <button class="tab" type="button" role="tab" data-tab="agent" aria-selected="false">Agent</button>
+        <button class="tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
+        <button class="tab" type="button" role="tab" data-tab="config" aria-selected="false">Config</button>
+      </div>
+      <div class="tabpane on" data-pane="run">
       <div class="sect">
         <h4>Run options (new tasks)</h4>
         <label class="lab" for="startUrl">Start URL (optional)</label>
@@ -338,7 +354,11 @@ label.lab:first-child{margin-top:0}
         </select>
       </div>
       <div class="sect">
-        <h4>Models</h4>
+        <label class="lab" for="runDeep" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="runDeep"> Deep research mode (longer budget, structured report in Files)</label>
+        <label class="lab" for="runFast" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="runFast"> Fast mode (single-pass action selection)</label>
+      </div>
+      <div class="sect">
+        <h4>Models &amp; proxy</h4>
         <div id="modelsInfo" class="hint" style="margin:0">Loading…</div>
       </div>
       <div class="sect">
@@ -350,11 +370,62 @@ label.lab:first-child{margin-top:0}
         <div class="kv" id="runtimeKv"></div>
       </div>
       <div class="sect">
+        <h4>Usage</h4>
+        <div class="kv" id="usageKv"></div>
+      </div>
+      <div class="sect">
         <h4>Agent instructions</h4>
         <div class="kv" id="instrKv"></div>
       </div>
       <div class="sect">
         <button class="btn danger" id="settingsLogout" type="button">Sign out</button>
+      </div>
+      </div>
+      <div class="tabpane" data-pane="agent">
+        <div class="sect">
+          <h4>Agent system prompt</h4>
+          <label class="lab" for="agentPrompt">Extra instructions added to every run (saved to your Phoenix settings)</label>
+          <textarea class="field" id="agentPrompt" rows="8" maxlength="4000" placeholder="e.g. prefer official sites; summarize in plain language"></textarea>
+          <label class="lab" for="agentMaxSteps">Max actions per run (optional)</label>
+          <input class="field" id="agentMaxSteps" type="number" min="1" max="200" placeholder="server default">
+          <div class="row" style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn small primary" id="agentSave" type="button">Save agent settings</button>
+            <button class="btn small" id="agentReset" type="button">Reset</button>
+            <span id="agentMsg" class="hint" style="margin:0"></span>
+          </div>
+        </div>
+      </div>
+      <div class="tabpane" data-pane="browser">
+        <div class="sect">
+          <h4>Browser options</h4>
+          <label class="lab" for="brHeadless">Mode</label>
+          <select class="field" id="brHeadless"><option value="">Server default</option><option value="true">Headless</option><option value="false">Headed (visible)</option></select>
+          <label class="lab" for="brW">Viewport width</label>
+          <input class="field" id="brW" type="number" min="320" max="3840">
+          <label class="lab" for="brH">Viewport height</label>
+          <input class="field" id="brH" type="number" min="240" max="2160">
+          <label class="lab" for="brUA">User agent (optional)</label>
+          <input class="field" id="brUA" maxlength="400" placeholder="server default">
+          <label class="lab" for="brSlow">Slow motion (ms per action)</label>
+          <input class="field" id="brSlow" type="number" min="0" max="2000">
+          <div class="row" style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn small primary" id="browserSave" type="button">Save browser settings</button>
+            <button class="btn small" id="browserReset" type="button">Reset</button>
+            <span id="browserMsg" class="hint" style="margin:0"></span>
+          </div>
+        </div>
+      </div>
+      <div class="tabpane" data-pane="config">
+        <div class="sect">
+          <h4>Save and load config</h4>
+          <div class="hint" style="margin:0 0 10px">Export your agent and browser settings plus the current task draft as JSON, or import a file saved earlier.</div>
+          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn small primary" id="cfgExport" type="button">Export config JSON</button>
+            <button class="btn small" id="cfgImportBtn" type="button">Import config JSON</button>
+            <input type="file" id="cfgFile" accept="application/json,.json" hidden>
+          </div>
+          <div class="hint" id="cfgMsg" style="margin-top:10px"></div>
+        </div>
       </div>
     </div>
   </aside>
@@ -394,7 +465,7 @@ let logsOpen=false;
 let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
-const cfg={model:'auto|',effort:'',fast:false};
+const cfg={model:'auto|',effort:'',fast:false,deep:false};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -440,6 +511,12 @@ function openPanel(id){closePanels(id);$('sidebar').classList.remove('open');$(i
 function closePanels(except){['filesPanel','settingsPanel'].forEach(id=>{if(id!==except)$(id).classList.remove('open')});if(!except||except==='sidebar'){}if(!except)$('scrim').classList.remove('open')}
 $('sideBtn').onclick=()=>{const open=!$('sidebar').classList.contains('open');closePanels();setSide(open)};
 $('scrim').onclick=()=>{setSide(false);closePanels()};
+document.querySelectorAll('.tab[data-tab]').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab[data-tab]').forEach(x=>{const on=x===t;x.classList.toggle('on',on);x.setAttribute('aria-selected',String(on))});
+  document.querySelectorAll('.tabpane').forEach(pn=>pn.classList.toggle('on',pn.dataset.pane===t.dataset.tab));
+  if(t.dataset.tab==='agent')loadAgentSettings();
+  if(t.dataset.tab==='browser')loadBrowserSettings();
+});
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{closePanels();$('scrim').classList.remove('open')});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){setSide(false);closePanels();$('scrim').classList.remove('open')}});
 $('filesBtn').onclick=()=>{openPanel('filesPanel');loadArtifacts()};
@@ -451,6 +528,7 @@ $('logoutBtn').onclick=()=>logout(false);
 $('refreshBtn').onclick=()=>{loadTasks();if(selectedRef)loadDetail()};
 $('newTaskBtn').onclick=()=>{setSide(false);location.hash=''};
 $('shotBtn').onclick=refreshShot;
+$('artifactsRefresh').onclick=()=>loadArtifacts();
 $('shareBtn').onclick=async()=>{
   if(!selectedRef)return;
   try{const d=await api('/tasks/'+encodeURIComponent(selectedRef)+EP.summary);const text=d.summary;
@@ -628,7 +706,13 @@ $('sendMsgBtn').onclick=async()=>{
 function homeSync(){$('homeSubmit').disabled=$('homeInstruction').value.trim().length<3;$('homeSubmit').classList.toggle('ready',!$('homeSubmit').disabled)}
 $('homeInstruction').addEventListener('input',homeSync);
 $('homeInstruction').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('homeSubmit').click()}});
-$('homeFast').onclick=()=>{cfg.fast=!cfg.fast;$('homeFast').classList.toggle('on',cfg.fast);$('homeFast').setAttribute('aria-pressed',String(cfg.fast))};
+function setToggle(btn,on){btn.classList.toggle('on',on);btn.setAttribute('aria-pressed',String(on))}
+function syncToggles(){setToggle($('homeFast'),cfg.fast);setToggle($('homeDeep'),cfg.deep);$('runFast').checked=cfg.fast;$('runDeep').checked=cfg.deep}
+$('homeFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles()};
+$('homeDeep').onclick=()=>{cfg.deep=!cfg.deep;syncToggles()};
+$('runFast').onchange=()=>{cfg.fast=$('runFast').checked;syncToggles()};
+$('runDeep').onchange=()=>{cfg.deep=$('runDeep').checked;syncToggles()};
+$('taskFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles();setToggle($('taskFast'),cfg.fast)};
 $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
 $('homeSubmit').onclick=async()=>{
@@ -638,6 +722,8 @@ $('homeSubmit').onclick=async()=>{
   const [provider,model]=cfg.model.split('|');
   const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
   if(cfg.effort)body.effort=cfg.effort;
+  if(cfg.fast)body.fast_mode=true;
+  if(cfg.deep)body.deep_research=true;
   if(model)body.model=model;
   const su=$('startUrl').value.trim();if(su)body.start_url=su;
   const to=$('timeout').value.trim();if(to)body.timeout_seconds=Number(to);
@@ -684,7 +770,18 @@ async function loadCatalog(){
   fillModelSelect($('homeModel'));
   updateProv();
 }
+let ownerSettings=null;
+async function loadUsage(){
+  try{
+    const u=await api('/usage');const st=u.stats||{};
+    $('balance').textContent=st.total_tasks+' tasks';
+    $('usagePill').title=st.completed+' completed, '+st.active+' active, '+st.failed+' failed';
+    const mins=Math.floor((st.runtime_seconds||0)/60);
+    $('usageKv').innerHTML=[['Tasks',String(st.total_tasks)],['Completed',String(st.completed)],['Failed',String(st.failed)],['Active',String(st.active)],['Runtime',mins+' min'],['Deep research tasks',String(st.deep_research_tasks)],['Fast mode tasks',String(st.fast_mode_tasks)],['Uploaded files',String(st.files)]].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
+  }catch(err){$('usageKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
+}
 async function loadSettings(){
+  loadUsage();
   try{
     const p=await api('/proxy/status');
     $('proxyKv').innerHTML=[['Mode',p.mode],['Configured',p.configured?'yes':'no'],['Identifier',p.identifier||'none'],['Credentials',p.credentials_configured?'set':'not set']].map(([k,v])=>'<div>'+esc(k)+'</div><div>'+esc(v)+'</div>').join('');
@@ -697,6 +794,89 @@ async function loadSettings(){
     $('instrKv').innerHTML=Object.keys(ins).slice(0,12).map(k=>'<div>'+esc(k)+'</div><div>'+esc(typeof ins[k]==='object'?JSON.stringify(ins[k]):ins[k])+'</div>').join('')||'<div>none</div>';
   }catch(err){$('runtimeKv').innerHTML='<div>Error</div><div>'+esc(err.message)+'</div>'}
 }
+
+async function loadOwnerSettings(){ownerSettings=await api('/settings');return ownerSettings}
+async function saveOwnerSettings(next,msgEl){
+  try{
+    ownerSettings=await api('/settings',{method:'PUT',body:JSON.stringify(next)});
+    msgEl.textContent='Saved.';msgEl.className='ok';
+  }catch(err){msgEl.textContent=err.message;msgEl.className='err'}
+  setTimeout(()=>{msgEl.textContent='';msgEl.className='hint'},3000);
+  return ownerSettings;
+}
+async function loadAgentSettings(){
+  try{const d=await loadOwnerSettings();$('agentPrompt').value=d.agent.system_prompt||'';$('agentMaxSteps').value=d.agent.max_steps||''}catch(err){$('agentMsg').textContent=err.message}
+}
+$('agentSave').onclick=async()=>{
+  const base=ownerSettings||await loadOwnerSettings();
+  const ms=$('agentMaxSteps').value.trim();
+  const next={agent:{system_prompt:$('agentPrompt').value,max_steps:ms?Number(ms):null},browser:base.browser};
+  await saveOwnerSettings(next,$('agentMsg'));
+};
+$('agentReset').onclick=async()=>{
+  const base=ownerSettings||await loadOwnerSettings();
+  $('agentPrompt').value='';$('agentMaxSteps').value='';
+  await saveOwnerSettings({agent:{system_prompt:'',max_steps:null},browser:base.browser},$('agentMsg'));
+};
+async function loadBrowserSettings(){
+  try{const d=await loadOwnerSettings();const b=d.browser;
+    $('brHeadless').value=b.headless===null||b.headless===undefined?'':String(b.headless);
+    $('brW').value=b.viewport_width;$('brH').value=b.viewport_height;$('brUA').value=b.user_agent||'';$('brSlow').value=b.slow_mo_ms||0;
+  }catch(err){$('browserMsg').textContent=err.message}
+}
+$('browserSave').onclick=async()=>{
+  const base=ownerSettings||await loadOwnerSettings();
+  const hl=$('brHeadless').value;
+  const next={agent:base.agent,browser:{headless:hl===''?null:hl==='true',viewport_width:Number($('brW').value)||1280,viewport_height:Number($('brH').value)||800,user_agent:$('brUA').value.trim(),slow_mo_ms:Number($('brSlow').value)||0}};
+  await saveOwnerSettings(next,$('browserMsg'));
+};
+$('browserReset').onclick=async()=>{
+  const base=ownerSettings||await loadOwnerSettings();
+  await saveOwnerSettings({agent:base.agent,browser:{headless:null,viewport_width:1280,viewport_height:800,user_agent:'',slow_mo_ms:0}},$('browserMsg'));
+  loadBrowserSettings();
+};
+$('cfgExport').onclick=async()=>{
+  try{
+    const r=await fetch('/config/export',{headers:token?{Authorization:'Bearer '+token}:{}});
+    if(!r.ok)throw new Error('Export failed');
+    const doc=await r.json();
+    const doc2={format:'phoenix-config',version:1,settings:doc.settings,task:draftFromHome()};
+    const blob=new Blob([JSON.stringify(doc2,null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='phoenix-config.json';a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    $('cfgMsg').textContent='Exported phoenix-config.json.';$('cfgMsg').className='ok';
+  }catch(err){$('cfgMsg').textContent=err.message;$('cfgMsg').className='err'}
+};
+function draftFromHome(){
+  const instruction=$('homeInstruction').value.trim();
+  const [provider,model]=cfg.model.split('|');
+  const d={instruction:instruction.length>=3?instruction:'Describe the task here',provider:provider||'auto',proxy_mode:$('proxyMode').value,fast_mode:cfg.fast,deep_research:cfg.deep};
+  if(cfg.effort)d.effort=cfg.effort;if(model)d.model=model;
+  const su=$('startUrl').value.trim();if(su)d.start_url=su;
+  const to=$('timeout').value.trim();if(to)d.timeout_seconds=Number(to);
+  return d;
+}
+$('cfgImportBtn').onclick=()=>$('cfgFile').click();
+$('cfgFile').onchange=async()=>{
+  const f=$('cfgFile').files[0];if(!f)return;
+  try{
+    const doc=JSON.parse(await f.text());
+    const d=await api('/config/import',{method:'POST',body:JSON.stringify(doc)});
+    if(d.task){
+      if(d.task.fast_mode!==undefined){cfg.fast=!!d.task.fast_mode}
+      if(d.task.deep_research!==undefined){cfg.deep=!!d.task.deep_research}
+      if(d.task.effort){cfg.effort=d.task.effort;$('homeEffort').value=d.task.effort}
+      if(d.task.instruction&&d.task.instruction.length>=3&&d.task.instruction!=='Describe the task here')$('homeInstruction').value=d.task.instruction;
+      if(d.task.start_url)$('startUrl').value=d.task.start_url;
+      if(d.task.timeout_seconds)$('timeout').value=d.task.timeout_seconds;
+      if(d.task.proxy_mode)$('proxyMode').value=d.task.proxy_mode;
+      syncToggles();homeSync();
+    }
+    $('cfgMsg').textContent='Imported settings'+(d.task?' and task draft':'')+'.';$('cfgMsg').className='ok';
+    await loadAgentSettings();
+  }catch(err){$('cfgMsg').textContent=err.message;$('cfgMsg').className='err'}
+  $('cfgFile').value='';
+};
 
 function startApp(){
   showApp();

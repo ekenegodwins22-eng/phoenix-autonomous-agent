@@ -11,6 +11,17 @@ from app.agent.action_schema import ActionRequest
 from app.agent.prompt_loader import InstructionConfigError, build_effective_instructions
 from app.proxy import configured_proxy
 from app import checkpoint as checkpoint_format
+from app import run_options as run_opts
+
+DEEP_RESEARCH_STEP_MULTIPLIER = 3
+
+def _max_steps() -> int:
+    opts = run_opts.current()
+    if opts.get("max_steps"):
+        return int(opts["max_steps"])
+    if opts.get("deep_research"):
+        return settings.max_agent_steps * DEEP_RESEARCH_STEP_MULTIPLIER
+    return settings.max_agent_steps
 
 class HumanInterventionRequired(RuntimeError):
     """Raised when a page requires a human challenge or access-control decision."""
@@ -79,9 +90,18 @@ async def _snapshot(page):
 async def _choose_action(instruction, history, page_state, step, provider_choice="auto", model=None):
     agent_instructions, instruction_version, _ = build_effective_instructions()
     system_prompt = SYSTEM + "\n\nACTIVE AGENT INSTRUCTIONS (version " + instruction_version + "):\n" + agent_instructions
-    prompt = {"task": instruction, "step": step, "max_steps": settings.max_agent_steps, "history": history[-12:], "page": page_state}
+    opts = run_opts.current()
+    owner_prompt = str(opts.get("system_prompt") or "").strip()
+    if owner_prompt:
+        system_prompt += "\n\nOWNER INSTRUCTIONS (saved in Phoenix settings; apply unless they conflict with safety or verification rules):\n" + owner_prompt
+    fast = bool(opts.get("fast_mode"))
+    if fast:
+        system_prompt += "\n\nFAST MODE: choose the single most direct next action from the page state. Do not deliberate; do not plan multiple steps."
+    prompt = {"task": instruction, "step": step, "max_steps": _max_steps(), "history": history[-12:], "page": page_state}
     last_provider, last_model = provider_choice, model
-    for attempt in range(max(0, settings.model_action_retries) + 1):
+    # Fast mode is one model pass per action (no correction retries); normal mode keeps the full retry budget.
+    attempts = 0 if fast else max(0, settings.model_action_retries)
+    for attempt in range(attempts + 1):
         if attempt:
             prompt['correction'] = 'The previous response was not a supported action or omitted required arguments. Continue the unfinished task and return exactly one JSON action object; do not explain or claim completion.'
         raw, last_provider, last_model = await chat([{"role":"system","content":system_prompt}, {"role":"user","content":json.dumps(prompt, ensure_ascii=False)}], provider=provider_choice, model=model)
@@ -326,14 +346,14 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
             await report(f"Opening {url}")
             await _browser_retry(lambda: page.goto(url, wait_until='domcontentloaded'))
             history.append({"tool":"goto", "url":page.url, "result":"navigation complete"})
-        for step in range(start_step, settings.max_agent_steps + 1):
+        for step in range(start_step, _max_steps() + 1):
             if cancel_event and cancel_event.is_set():
                 raise asyncio.CancelledError()
             if get_user_messages:
                 for message in await get_user_messages():
                     history.append({"tool": "user_message", "message": message.get("content", "")})
                     await report("Received a new user instruction from the task chat")
-            await report(f"Choosing action {step}/{settings.max_agent_steps}")
+            await report(f"Choosing action {step}/{_max_steps()}")
             state = await _snapshot(page) if page.url else {"url":"", "title":"", "body":"No page open yet. Use goto with an explicit URL from the task, or ask user for target URL.", "controls":[]}
             while state.get("challenge"):
                 if cancel_event and cancel_event.is_set():
@@ -461,7 +481,7 @@ async def execute_task(instruction, start_url=None, provider_choice="auto", mode
                     # Outcome of a side effect is unknown after an error: keep it 'error' so restart inspects instead of replaying.
                     await save_checkpoint(_checkpoint(step, 'error', history, action=name, target=action.get('target'), url=page.url, verified=False, proxy_mode=proxy_mode, proxy=proxy, mailbox_context=mailbox_context, mailbox_email_attempted=mailbox_email_attempted, error_type=type(exc).__name__, generated=bool(generated_credentials)))
                 await report(f"Action {step} failed: {type(exc).__name__}")
-    raise TaskIncomplete(f"Execution budget exhausted after {settings.max_agent_steps} actions before Phoenix could verify completion.")
+    raise TaskIncomplete(f"Execution budget exhausted after {_max_steps()} actions before Phoenix could verify completion.")
 
 def _format_result(summary, history, providers, models=None):
     clean = []

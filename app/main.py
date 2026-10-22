@@ -1,3 +1,4 @@
+import json
 import secrets
 import asyncio, logging
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
@@ -14,6 +15,10 @@ from app.providers import available_models
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
 from app.agent.task_manager import task_manager as task_store
+from app import run_options as run_opts
+from app import settings_store
+from app.models import OwnerSettings, ConfigDocument
+from app.runner import DEEP_RESEARCH_STEP_MULTIPLIER
 from app import checkpoint as checkpoint_format
 from app.agent.prompt_loader import InstructionConfigError, instruction_status
 from app.proxy import configured_proxy, public_status
@@ -180,7 +185,7 @@ async def create_task(request: TaskRequest, user=Depends(current_user)):
         raise HTTPException(status_code=422, detail='Configured proxy mode requested but no protected proxy is configured')
     if request.proxy_mode == 'direct' and settings.browser_proxy_required:
         raise HTTPException(status_code=422, detail='A proxy is required by server configuration for this deployment')
-    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort)
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort, fast_mode=request.fast_mode, deep_research=request.deep_research)
     asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
@@ -242,7 +247,8 @@ async def run_task(task_id: str):
     resume_event = asyncio.Event()
     task_cancel_events[task_id] = cancel_event
     task_resume_events[task_id] = resume_event
-    budget = float(item.get('timeout_seconds') or settings.task_timeout_seconds)
+    default_budget = settings.task_timeout_seconds * (3 if item.get('deep_research') else 1)
+    budget = float(item.get('timeout_seconds') or min(3600, default_budget))
     clock = _ActiveClock(budget, execution_lock)
     try:
         resume_from = None
@@ -266,6 +272,14 @@ async def run_task(task_id: str):
         async def save_checkpoint(checkpoint):
             task_store.save_checkpoint(task_id, checkpoint)
         request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct')
+        owner_cfg = settings_store.get_settings(item['owner_id'])
+        run_opts.run_options.set({
+            'fast_mode': bool(item.get('fast_mode')),
+            'deep_research': bool(item.get('deep_research')),
+            'system_prompt': owner_cfg['agent'].get('system_prompt') or '',
+            'max_steps': owner_cfg['agent'].get('max_steps'),
+            'browser': dict(owner_cfg['browser']),
+        })
         await clock.acquire()
         try:
             if task_store.is_cancel_requested(task_id):
@@ -277,6 +291,11 @@ async def run_task(task_id: str):
         finally:
             clock.release()
         task_store.set_state(task_id, 'completed', progress='Task completed with verified actions.', result=result)
+        if item.get('deep_research'):
+            try:
+                _write_research_report(item, result)
+            except Exception:
+                logging.exception('Research report for task %s could not be written', task_id)
     except asyncio.CancelledError:
         task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
     except HumanInterventionRequired as exc:
@@ -294,6 +313,44 @@ async def run_task(task_id: str):
         task_store.release_worker(task_id)
         task_cancel_events.pop(task_id, None)
         task_resume_events.pop(task_id, None)
+
+
+def _write_research_report(item: dict, result: str) -> None:
+    """Write a structured report (JSON + markdown) for a deep-research task into the Files store."""
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        parsed = _json.loads(result) if isinstance(result, str) else {}
+    except ValueError:
+        parsed = {}
+    summary = (parsed.get('summary') if isinstance(parsed, dict) else None) or str(result or '')
+    actions = (parsed.get('actions') if isinstance(parsed, dict) else None) or []
+    visited = []
+    for action in actions:
+        url = action.get('url') if isinstance(action, dict) else None
+        if url and url not in visited:
+            visited.append(url)
+    created = _dt.now(_tz.utc).isoformat()
+    report = {
+        'type': 'deep_research_report', 'version': 1, 'task_id': item['id'], 'slug': item['slug'],
+        'question': item['instruction'], 'generated_at': created,
+        'findings': summary, 'sources_visited': visited,
+        'steps': [{'index': i + 1, 'action': a.get('action') or a.get('tool'), 'target': a.get('target') or a.get('url'), 'error': a.get('error')} for i, a in enumerate(actions) if isinstance(a, dict)],
+        'providers_used': parsed.get('providers_used', []) if isinstance(parsed, dict) else [],
+        'models_used': parsed.get('models_used', []) if isinstance(parsed, dict) else [],
+    }
+    md = ['# Deep research report', '', f"Question: {item['instruction']}", f"Generated: {created}", '', '## Findings', str(summary), '', '## Sources visited']
+    md += [f'- {u}' for u in visited] or ['- none recorded']
+    md += ['', '## Steps'] + [f"{s['index']}. {s['action']} {s['target'] or ''}".rstrip() + (f" (error: {s['error']})" if s['error'] else '') for s in report['steps']]
+    base = Path(settings.database_path).resolve().parent / 'uploads' / item['id']
+    base.mkdir(parents=True, exist_ok=True)
+    for name, content, ctype in (
+        ('deep-research-report.json', _json.dumps(report, ensure_ascii=False, indent=2), 'application/json'),
+        ('deep-research-report.md', '\n'.join(md) + '\n', 'text/markdown'),
+    ):
+        path = base / name
+        path.write_text(content, encoding='utf-8')
+        task_store.add_file(item['id'], item['owner_id'], name, ctype, path.stat().st_size, str(path))
 
 
 async def _run_with_active_budget(execution, clock: _ActiveClock):
@@ -545,6 +602,38 @@ async def task_summary(task_ref: str, user=Depends(current_user)):
     if item.get('result'): lines.append('Result:\n' + str(item['result'])[:4000])
     if item.get('error'): lines.append('Error: ' + str(item['error'])[:1000])
     return {'task_id': item['id'], 'slug': item['slug'], 'summary': '\n'.join(lines), 'share_path': f"/tasks/{item['slug']}"}
+
+
+@app.get('/usage')
+async def usage(user=Depends(current_user)):
+    """Phoenix-native usage stats (no monetary balance exists in this server)."""
+    stats = task_store.usage_stats(user['id'])
+    return {'unit': 'tasks', 'stats': stats, 'balance': None, 'note': 'Phoenix tracks task and runtime usage; no monetary balance is kept by this server.'}
+
+
+@app.get('/settings')
+async def get_owner_settings(user=Depends(current_user)):
+    return settings_store.get_settings(user['id'])
+
+
+@app.put('/settings')
+async def put_owner_settings(body: OwnerSettings, user=Depends(current_user)):
+    return settings_store.save_settings(user['id'], body.model_dump())
+
+
+@app.get('/config/export')
+async def export_config(user=Depends(current_user)):
+    """Export the owner's settings as a portable Phoenix config document (JSON)."""
+    cfg = settings_store.get_settings(user['id'])
+    doc = {'format': 'phoenix-config', 'version': 1, 'settings': {'agent': cfg['agent'], 'browser': cfg['browser']}}
+    return Response(content=json.dumps(doc, indent=2, ensure_ascii=False), media_type='application/json', headers={'Content-Disposition': 'attachment; filename="phoenix-config.json"'})
+
+
+@app.post('/config/import')
+async def import_config(body: ConfigDocument, user=Depends(current_user)):
+    """Apply a Phoenix config document. Settings are saved; an included task draft is returned for the console to load."""
+    saved = settings_store.save_settings(user['id'], body.settings.model_dump())
+    return {'saved': True, 'settings': saved, 'task': body.task.model_dump() if body.task else None}
 
 
 @app.get('/tasks', response_model=list[TaskStatus])
