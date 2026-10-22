@@ -1,6 +1,6 @@
 # Third-party notices
 
-The Phoenix Console (`app/static/console.html`) adapts layout and visual patterns from the browser-use project (dashboard task list, status pills, task detail layout). No browser-use source code is copied into this repository.
+The Phoenix Console (`app/static/console.html`) adapts layout and visual tokens from the browser-use project's public site and dashboard styling: near-black canvas, zinc text ramp, orange primary action (#fe750e) with dark label, pill buttons and status pills, 0.5rem radius, Geist sans/mono type. No browser-use source code is copied into this repository; only values and patterns are adapted.
 
 browser-use
 https://github.com/browser-use/browser-use
