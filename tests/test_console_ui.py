@@ -67,3 +67,11 @@ def test_upload_artifacts_and_summary_round_trip(tmp_path, monkeypatch):
     summary = client.get(f'/tasks/{ref}/summary', headers=h).json()
     assert 'check upload wiring' in summary['summary'] and 'Effort: low' in summary['summary']
     assert client.post(f'/tasks/{ref}/uploads', headers=h, files={'file': ('x.txt', b'', 'text/plain')}).status_code == 422
+
+
+def test_console_task_view_has_framed_live_browser_hero():
+    html = (ROOT / 'app' / 'static' / 'console.html').read_text()
+    for marker in ('heroBrowser', 'heroShot', 'heroRefresh', 'heroRef', 'object-fit:contain', 'aspect-ratio:16/9', 'refreshHero', 'setInterval(refreshHero,2000)'):
+        assert marker in html, marker
+    # the hero polls the same endpoint as the screenshot pane
+    assert "EP.shot" in html and "'/tasks/'+encodeURIComponent(ref)+EP.shot" in html

@@ -153,6 +153,19 @@ label.lab:first-child{margin-top:0}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{background:var(--surface-2);border:1px solid var(--line-2);border-radius:9999px;padding:2px 10px;font-size:12px;color:var(--copy-2)}
 .shot{width:100%;border-radius:14px;border:1px solid var(--line);background:#000}
+/* live browser hero: framed viewport above the chat thread (browser-use style) */
+.hero{flex:none;width:min(960px,calc(100% - 32px));margin:12px auto 0;border:1px solid var(--line-2);border-radius:16px;background:var(--bar);overflow:hidden;box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 40px rgba(0,0,0,.45)}
+.hero-bar{display:flex;align-items:center;gap:10px;height:40px;padding:0 10px 0 14px;border-bottom:1px solid var(--line);background:var(--surface);min-width:0}
+.hero-dot{width:9px;height:9px;border-radius:50%;background:#555;flex:none}
+.hero-dot.live{background:var(--ok);box-shadow:0 0 0 3px rgba(16,185,129,.18)}
+.hero-ref{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--copy-2);font:12px/1 var(--mono)}
+.hero-state{color:var(--copy-3);font-size:12px;white-space:nowrap}
+.hero-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--line-2);background:transparent;color:var(--copy);display:inline-grid;place-items:center;flex:none}
+.hero-btn:hover{background:var(--surface-2)}
+.hero-view{position:relative;width:100%;aspect-ratio:16/9;background:#000;display:grid;place-items:center;overflow:hidden}
+.hero-view img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;display:block}
+.hero-empty{color:var(--copy-3);font-size:13px;padding:16px;text-align:center}
+@media(max-width:700px){.hero{width:100%;margin:0;border-radius:0;border-left:0;border-right:0}.hero-state{display:none}}
 .hint{color:var(--copy-3);font-size:12px;margin-top:8px}
 /* auth */
 .auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50}
@@ -274,6 +287,20 @@ label.lab:first-child{margin-top:0}
         <span id="pauseText">Phoenix paused on a captcha or email check. Complete it in the remote browser, then resume.</span>
         <div class="row"><button class="btn small primary" id="resumeBtn" type="button">I've completed verification, resume</button></div>
       </div>
+      <section class="hero" id="heroBrowser" aria-label="Live browser view">
+        <div class="hero-bar">
+          <span class="hero-dot" id="heroDot"></span>
+          <span class="hero-ref" id="heroRef">browser</span>
+          <span class="hero-state" id="heroState"></span>
+          <button class="hero-btn" id="heroRefresh" type="button" title="Refresh view" aria-label="Refresh browser view">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3L21 8"/><path d="M21 3v5h-5"/></svg>
+          </button>
+        </div>
+        <div class="hero-view" id="heroView">
+          <img id="heroShot" class="hidden" alt="Live browser view">
+          <div class="hero-empty" id="heroEmpty">Waiting for the browser...</div>
+        </div>
+      </section>
       <div class="thread" id="thread"><div class="thread-inner" id="threadInner"></div></div>
       <div class="err" id="taskErr" style="text-align:center;padding:0 16px"></div>
       <div class="dock">
@@ -490,7 +517,36 @@ function dur(s){return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s'}
 function showAuth(){var bt=document.getElementById('boot');if(bt)bt.remove();$('auth').classList.remove('hidden');$('app').classList.add('hidden')}
 function showApp(){var bt=document.getElementById('boot');if(bt)bt.remove();$('auth').classList.add('hidden');$('app').classList.remove('hidden')}
 function logout(silent){token='';localStorage.removeItem(KEY);stopTimers();selectedRef=null;closePanels();showAuth();if(silent)$('authErr').textContent='Session expired. Sign in again.'}
-function stopTimers(){clearTimeout(detailTimer);clearTimeout(listTimer)}
+function stopTimers(){clearTimeout(detailTimer);clearTimeout(listTimer);stopHero()}
+
+/* ---------- live browser hero: polls the existing screenshot endpoint ---------- */
+let heroUrl=null,heroInterval=null,heroBusy=false,heroFor=null;
+function stopHero(){if(heroInterval){clearInterval(heroInterval);heroInterval=null}}
+function resetHero(){stopHero();heroFor=null;if(heroUrl){URL.revokeObjectURL(heroUrl);heroUrl=null}$('heroShot').removeAttribute('src');$('heroShot').classList.add('hidden');$('heroEmpty').classList.remove('hidden');$('heroEmpty').textContent='Waiting for the browser...';$('heroState').textContent=''}
+async function refreshHero(){
+  const ref=selectedRef;if(!ref||!token||heroBusy)return;heroBusy=true;
+  try{
+    const r=await fetch('/tasks/'+encodeURIComponent(ref)+EP.shot,{headers:{'Authorization':'Bearer '+token},cache:'no-store'});
+    if(selectedRef!==ref)return;
+    if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.detail||'Browser view unavailable')}
+    const blob=await r.blob();if(selectedRef!==ref)return;
+    const next=URL.createObjectURL(blob);if(heroUrl)URL.revokeObjectURL(heroUrl);heroUrl=next;
+    $('heroShot').src=heroUrl;$('heroShot').classList.remove('hidden');$('heroEmpty').classList.add('hidden');
+    heroFor=ref;
+  }catch(err){
+    if(selectedRef!==ref)return;
+    if(!heroUrl){$('heroShot').classList.add('hidden');$('heroEmpty').classList.remove('hidden');$('heroEmpty').textContent=err.message}
+  }finally{heroBusy=false}
+}
+function syncHero(){
+  const t=detail;if(!t||!selectedRef)return;
+  const active=RUN.includes(t.status);
+  $('heroRef').textContent=selectedRef;$('heroRef').title=selectedRef;
+  $('heroDot').classList.toggle('live',active);
+  $('heroState').textContent=label(t.status);
+  if(active){if(!heroInterval)heroInterval=setInterval(refreshHero,2000)}
+  else{stopHero();if(heroFor!==selectedRef)refreshHero()}
+}
 
 $('authSwitch').onclick=()=>{authMode=authMode==='login'?'register':'login';$('authTitle').textContent=authMode==='login'?'Sign in':'Create account';$('authBtn').textContent=authMode==='login'?'Sign in':'Create account';$('authSwitch').textContent=authMode==='login'?'Create an account instead':'Sign in instead';$('authErr').textContent=''};
 $('authForm').onsubmit=async e=>{
@@ -530,6 +586,7 @@ $('logoutBtn').onclick=()=>logout(false);
 $('refreshBtn').onclick=()=>{loadTasks();if(selectedRef)loadDetail()};
 $('newTaskBtn').onclick=()=>{setSide(false);location.hash=''};
 $('shotBtn').onclick=refreshShot;
+$('heroRefresh').onclick=()=>{heroBusy=false;refreshHero()};
 $('artifactsRefresh').onclick=()=>loadArtifacts();
 $('shareBtn').onclick=async()=>{
   if(!selectedRef)return;
@@ -560,7 +617,7 @@ function showTask(){
   $('viewHome').classList.add('hidden');$('viewTask').classList.remove('hidden');
   $('homeRight').classList.add('hidden');$('taskRight').classList.remove('hidden');$('topTitle').classList.remove('hidden');
   $('threadInner').innerHTML='';
-  logsOpen=false;shotUrl=null;$('shot').src='';$('shot').classList.add('hidden');
+  logsOpen=false;shotUrl=null;$('shot').src='';$('shot').classList.add('hidden');resetHero();
   loadDetail();
 }
 
@@ -593,7 +650,7 @@ async function loadDetail(){
     detail=t;msgs=m;
     if(logsOpen){await loadLogs()}else{logsList=t.logs||[]}
     renderTask();
-    if(t.status==='waiting_human'&&!shotUrl&&$('filesPanel').classList.contains('open'))refreshShot();
+    syncHero();
   }catch(err){$('taskErr').textContent=err.message;$('taskErr').className='err'}
   finally{detailBusy=false;clearTimeout(detailTimer);if(selectedRef)detailTimer=setTimeout(loadDetail,3000)}
 }
