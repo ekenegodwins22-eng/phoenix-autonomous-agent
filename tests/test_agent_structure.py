@@ -5,9 +5,9 @@ def test_prompt_loader_discovers_shared_and_specialized_skills():
     from app.agent.prompt_loader import build_effective_instructions, discover_skills
     skills = discover_skills()
     names = [skill['name'] for skill in skills]
-    assert names == ['root', 'shared', 'browser', 'recovery']
+    assert names == ['shared', 'browser', 'recovery']
     effective, version, discovered = build_effective_instructions()
-    assert discovered == names
+    assert discovered == ['root'] + names
     assert len(version) == 64
     assert '# AUTHORITATIVE AGENT.md' in effective
     assert '## root (SKILL.md)' in effective
