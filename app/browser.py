@@ -29,7 +29,7 @@ class SingleBrowser:
                 bopts = run_opts.current().get('browser') or {}
                 headless = bopts.get('headless') if bopts.get('headless') is not None else settings.browser_headless
                 launch_options = {'headless': headless, 'slow_mo': int(bopts.get('slow_mo_ms') or 0), 'args': [
-                    "--disable-dev-shm-usage", "--disable-background-networking",
+                    "--no-sandbox", "--no-zygote", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-background-networking",
                     "--disable-extensions", "--disable-sync", "--no-first-run",
                     "--no-default-browser-check", "--disable-gpu",
                     "--disable-background-timer-throttling", "--disable-renderer-backgrounding"]}

@@ -132,6 +132,9 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
     bopts = run_opts.current().get('browser') or {}
     headless = bopts.get('headless') if bopts.get('headless') is not None else settings.browser_headless
     kwargs: dict = {'headless': bool(headless)}
+    # Render/Docker runs as a non-root user without a usable Chrome sandbox: Chrome exits before CDP.
+    kwargs['chromium_sandbox'] = False
+    kwargs['args'] = ['--no-sandbox', '--no-zygote', '--disable-setuid-sandbox', '--disable-gpu-sandbox', '--disable-dev-shm-usage']
     if bopts.get('viewport_width') and bopts.get('viewport_height'):
         kwargs['viewport'] = {'width': int(bopts['viewport_width']), 'height': int(bopts['viewport_height'])}
     if bopts.get('user_agent'):
