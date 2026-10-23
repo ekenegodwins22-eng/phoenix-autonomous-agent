@@ -122,9 +122,10 @@ def add_message(task_id: str, owner_id: int, role: str, content: str) -> dict:
         raise ValueError('Message cannot be empty')
     now = _now()
     with _connect() as conn:
-        cur = conn.execute('INSERT INTO task_messages (task_id,owner_id,created_at,role,content) VALUES (?,?,?,?,?)', (task_id,owner_id,now,role,content))
+        # RETURNING works on both SQLite and PostgreSQL; psycopg cursors have no lastrowid.
+        cur = conn.execute('INSERT INTO task_messages (task_id,owner_id,created_at,role,content) VALUES (?,?,?,?,?) RETURNING id', (task_id,owner_id,now,role,content))
+        message_id = cur.fetchone()['id']
         conn.commit()
-        message_id = cur.lastrowid
     return {'id': message_id, 'task_id': task_id, 'created_at': now, 'role': role, 'content': content}
 
 
@@ -154,10 +155,10 @@ def claim_unconsumed_user_messages(task_id: str) -> list[dict]:
 def add_file(task_id: str, owner_id: int, name: str, content_type: str | None, size: int, path: str) -> dict:
     now = _now()
     with _connect() as conn:
-        cur = conn.execute('INSERT INTO task_files (task_id,owner_id,name,content_type,size,path,created_at) VALUES (?,?,?,?,?,?,?)', (task_id, owner_id, name, content_type, size, path, now))
+        cur = conn.execute('INSERT INTO task_files (task_id,owner_id,name,content_type,size,path,created_at) VALUES (?,?,?,?,?,?,?) RETURNING id', (task_id, owner_id, name, content_type, size, path, now))
+        file_id = cur.fetchone()['id']
         conn.execute('UPDATE tasks SET attachment_count=attachment_count+1 WHERE id=?', (task_id,))
         conn.commit()
-        file_id = cur.lastrowid
     return {'id': file_id, 'task_id': task_id, 'name': name, 'content_type': content_type, 'size': size, 'created_at': now}
 
 
@@ -271,7 +272,7 @@ def release_worker(task_id: str):
 def queue_retry(task_id: str) -> dict | None:
     with _connect() as conn:
         row = conn.execute("SELECT recovery_count,status FROM tasks WHERE id=?", (task_id,)).fetchone()
-        if not row or row['status'] != 'failed' or row['recovery_count'] >= settings.max_task_recovery_attempts:
+        if not row or row['status'] not in {'failed','cancelled'} or row['recovery_count'] >= settings.max_task_recovery_attempts:
             return None
         conn.execute("UPDATE tasks SET status='queued', progress='Retry queued after explicit user request.', error=NULL, result=NULL, human_help=NULL, waiting_details=NULL, cancel_requested=0, worker_token=NULL, recovery_count=recovery_count+1, updated_at=? WHERE id=?", (_now(),task_id))
         conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (task_id,_now(),'recovery','Explicit retry requested; task re-queued.'))

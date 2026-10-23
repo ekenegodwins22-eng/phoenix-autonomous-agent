@@ -202,6 +202,10 @@ async def start_task(task_id: str):
         task_handles.pop(task_id, None)
 
 
+class _BudgetExpired(TimeoutError):
+    """Raised only when the active execution budget is genuinely used up."""
+
+
 class _ActiveClock:
     """Execution budget that excludes human-verification pauses.
 
@@ -301,8 +305,12 @@ async def run_task(task_id: str):
         task_store.set_state(task_id, 'cancelled', progress='Task cancelled server-side; browser resources are being released.')
     except HumanInterventionRequired as exc:
         task_store.set_state(task_id, 'waiting_human', progress='Paused for required human verification.', error=str(exc)[:400], human_help='Complete the challenge manually, then call POST /tasks/{id}/resume.', waiting_details=None)
-    except TimeoutError:
+    except _BudgetExpired:
         task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=f'Execution time budget of {int(budget)}s was used; human pause time is not counted.')
+    except TimeoutError as exc:
+        # Inner timeouts (browser/CDP/step) are NOT budget expiry; label them as what they are.
+        logging.exception('Task %s hit an inner timeout', task_id)
+        task_store.set_state(task_id, 'failed', progress='Task failed on a browser or network timeout.', error=f'TimeoutError: {str(exc)[:300] or "operation timed out"}')
     except (TaskBlocked, TaskIncomplete) as exc:
         task_store.set_state(task_id, 'failed', progress='Task did not reach verified completion.', error=str(exc)[:400])
     except InstructionConfigError as exc:
@@ -376,7 +384,7 @@ async def _run_with_active_budget(execution, clock: _ActiveClock):
                 await execution
             except (asyncio.CancelledError, Exception):
                 pass
-            raise TimeoutError()
+            raise _BudgetExpired()
         if clock.paused_since is not None:
             await asyncio.sleep(0.05)
         else:
@@ -413,7 +421,15 @@ async def task_messages(task_ref: str, user=Depends(current_user)):
 async def send_task_message(task_ref: str, payload: TaskMessageRequest, user=Depends(current_user)):
     item = _task_for_user(task_ref, user)
     content = payload.content.strip()
-    message = task_store.add_message(item['id'], user['id'], 'user', content)
+    if not content:
+        raise HTTPException(status_code=422, detail='Message cannot be empty')
+    try:
+        message = task_store.add_message(item['id'], user['id'], 'user', content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logging.exception('Could not store follow-up message for task %s', item['id'])
+        raise HTTPException(status_code=503, detail='Could not save the message right now. Please try again.')
     normalized = content.lower().strip(' .!')
     if normalized in {'stop', 'cancel', 'abort', 'terminate', 'stop task', 'cancel task'}:
         if item['status'] not in {'completed', 'failed', 'cancelled'}:
@@ -426,6 +442,7 @@ async def send_task_message(task_ref: str, payload: TaskMessageRequest, user=Dep
         event = task_resume_events.get(item['id'])
         if event: event.set()
     elif item['status'] in {'completed', 'failed', 'cancelled'}:
+        # Failed/cancelled tasks are reopened by the follow-up; the message is already saved above.
         reopened = task_store.requeue_for_message(item['id'])
         if reopened:
             asyncio.create_task(start_task(item['id']))
@@ -455,9 +472,11 @@ async def cancel_task(task_ref: str, user=Depends(current_user)):
 @app.post('/tasks/{task_ref}/retry', response_model=TaskStatus, status_code=202)
 async def retry_task(task_ref: str, user=Depends(current_user)):
     item = _task_for_user(task_ref, user)
+    if item.get('status') not in {'failed', 'cancelled'}:
+        raise HTTPException(status_code=409, detail='Only failed or cancelled tasks can be retried. This task is still ' + str(item.get('status')) + '.')
     retried = task_store.queue_retry(item['id'])
     if not retried:
-        raise HTTPException(status_code=409, detail='Task is not eligible for a bounded retry')
+        raise HTTPException(status_code=409, detail='Retry limit reached for this task; send a follow-up message to continue it instead.')
     asyncio.create_task(start_task(item['id']))
     return snapshot(retried)
 

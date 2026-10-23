@@ -148,6 +148,20 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
 
 _REDACT_KEYS = ('text', 'value')
 
+# Local CDP attach: the /json/version fetch already bypasses proxies for localhost, but the
+# websocket connect (websockets lib) honours HTTP(S)_PROXY and can hang on 127.0.0.1.
+# Keep loopback traffic off any configured proxy so the CDP attach reaches Chrome directly.
+def _ensure_loopback_no_proxy() -> None:
+    import os
+    current = [x.strip() for x in (os.environ.get('NO_PROXY') or os.environ.get('no_proxy') or '').split(',') if x.strip()]
+    for host in ('127.0.0.1', 'localhost', '::1'):
+        if host not in current:
+            current.append(host)
+    os.environ['NO_PROXY'] = os.environ['no_proxy'] = ','.join(current)
+
+
+_ensure_loopback_no_proxy()
+
 
 def _step_actions(item) -> list[tuple[str, dict]]:
     """Return (action_name, params) pairs the model chose in one history item."""

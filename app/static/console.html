@@ -102,6 +102,11 @@ svg{display:block;flex-shrink:0}
 .send{margin-left:auto;width:42px;height:42px;border-radius:50%;border:0;background:#4a4a4a;color:#8a8a8a;display:inline-grid;place-items:center;transition:background-color .15s,color .15s}
 .send.ready{background:var(--copy);color:#0a0a0a}
 .send:disabled{opacity:1;cursor:not-allowed}
+.send.stop{background:var(--copy);color:#0a0a0a;position:relative}
+.send.stop:hover{opacity:.85}
+.send.stop::after{content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid transparent;border-top-color:var(--copy);animation:sendspin .9s linear infinite;pointer-events:none}
+@keyframes sendspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.send.stop::after{animation:none}}
 .err{color:var(--bad);font-size:13px;min-height:18px;margin-top:8px}
 .ok{color:var(--ok);font-size:13px}
 /* task view */
@@ -714,8 +719,13 @@ function renderTask(){
   $('resumeBtn').disabled=!paused;
   const costEl=$('costLabel');
   if(typeof t.cost_usd==='number'){costEl.textContent='$'+t.cost_usd.toFixed(2);costEl.classList.remove('hidden')}else{costEl.classList.add('hidden')}
-  $('taskModel').innerHTML='<option>'+esc((t.provider||'auto')+' · '+(t.model||'default'))+'</option>';
+  const running=RUN.includes(t.status);
+  const tm=$('taskModel');
+  if(running){tm.innerHTML='<option>'+esc((t.provider||'auto')+' · '+(t.model||'default'))+'</option>';tm.disabled=true;tm.parentElement.title='Model is locked while a task is running'}
+  else{fillModelSelect(tm);tm.disabled=false;tm.parentElement.title='Model for the next task'}
   $('taskProv').textContent=(t.provider||'A').charAt(0).toUpperCase();
+  // 4. send button: stop control while a task runs
+  setSendMode(running);
   const inner=$('threadInner');const thread=$('thread');
   const nearBottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<140;
   const parts=[bubble(t.instruction),activityHTML(t)];
@@ -763,7 +773,25 @@ $('retryBtn').onclick=()=>action('retry');
 function syncTaskSend(){$('sendMsgBtn').disabled=!$('composer').value.trim();$('sendMsgBtn').classList.toggle('ready',!$('sendMsgBtn').disabled)}
 $('composer').addEventListener('input',syncTaskSend);
 $('composer').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('sendMsgBtn').click()}});
+const SEND_ICON='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+const STOP_ICON='<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+function setSendMode(running){
+  const b=$('sendMsgBtn');
+  b.classList.toggle('stop',running);
+  b.setAttribute('aria-label',running?'Stop task':'Send message');
+  b.title=running?'Stop this task':'Send message';
+  if(running){b.innerHTML=STOP_ICON;b.disabled=false;b.classList.add('ready')}
+  else{b.innerHTML=SEND_ICON;syncTaskSend()}
+}
 $('sendMsgBtn').onclick=async()=>{
+  if($('sendMsgBtn').classList.contains('stop')){
+    if(!selectedRef)return;
+    $('sendMsgBtn').disabled=true;
+    try{await api('/tasks/'+encodeURIComponent(selectedRef)+'/cancel',{method:'POST'});$('msgStatus').textContent='Stopping task…';await loadDetail();await loadTasks()}
+    catch(err){$('msgStatus').textContent=err.message}
+    finally{$('sendMsgBtn').disabled=false}
+    return;
+  }
   const c=$('composer').value.trim();if(!c||!selectedRef)return;
   $('sendMsgBtn').disabled=true;
   try{
@@ -786,6 +814,7 @@ $('runFast').onchange=()=>{cfg.fast=$('runFast').checked;syncToggles()};
 $('runDeep').onchange=()=>{cfg.deep=$('runDeep').checked;syncToggles()};
 $('taskFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles();setToggle($('taskFast'),cfg.fast)};
 $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
+$('taskModel').onchange=()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task'};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
 $('homeSubmit').onclick=async()=>{
   $('homeErr').textContent='';
@@ -816,6 +845,7 @@ function updateProv(){
   $('homeProv').textContent=letter;$('taskProv').textContent=letter;
 }
 function fillModelSelect(sel){
+  if(!catalog.length)catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
   const groups={};
   catalog.forEach(c=>{(groups[c.provLabel]=groups[c.provLabel]||[]).push(c)});
   sel.innerHTML=Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(c=>'<option value="'+esc(c.value)+'"'+(c.value===cfg.model?' selected':'')+'>'+esc(c.label)+'</option>').join('')+'</optgroup>').join('');
