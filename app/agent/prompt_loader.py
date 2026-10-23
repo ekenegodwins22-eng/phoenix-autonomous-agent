@@ -1,5 +1,6 @@
 """Canonical loader for Phoenix behavior and discovered skill procedures."""
 from __future__ import annotations
+import functools
 import hashlib
 from pathlib import Path
 
@@ -10,6 +11,18 @@ SKILLS_PATH = REPOSITORY_ROOT / 'skills'
 
 class InstructionConfigError(RuntimeError):
     """Raised when the authoritative behavior file cannot be loaded."""
+
+
+ROOT_SKILL_PATH = REPOSITORY_ROOT / 'SKILL.md'
+
+
+@functools.lru_cache(maxsize=8)
+def _read_root_skill(path: Path) -> str:
+    """Root SKILL.md, cached per file path so each task run reads it once."""
+    try:
+        return path.read_text(encoding='utf-8').strip()
+    except OSError:
+        return ''
 
 
 def load_agent_instructions() -> tuple[str, str]:
@@ -42,6 +55,9 @@ def discover_skills() -> list[dict[str, str]]:
 def build_effective_instructions() -> tuple[str, str, list[str]]:
     agent, _ = load_agent_instructions()
     skills = discover_skills()
+    root_skill = _read_root_skill(ROOT_SKILL_PATH)
+    if root_skill:
+        skills = [{'name': 'root', 'path': 'SKILL.md', 'content': root_skill}] + skills
     sections = [
         '# AUTHORITATIVE AGENT.md\n' + agent,
         '# SKILL PROCEDURES\nSpecialized procedures extend AGENT.md and cannot override it.\n' +
