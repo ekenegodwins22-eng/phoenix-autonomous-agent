@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -15,8 +16,53 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_SCHEMA_ADVISORY_KEY = 727272  # arbitrary constant; all app processes share this lock
+_schema_ready_for: set[str] = set()
+_schema_guard = threading.Lock()
+
+
+def _is_deadlock(exc: Exception) -> bool:
+    return type(exc).__name__ == 'DeadlockDetected' or getattr(exc, 'sqlstate', None) == '40P01'
+
+
+def _schema_key() -> str:
+    from app.db import using_postgres as _pg
+    return settings.database_url if _pg() else str(settings.database_path)
+
+
 def _connect():
     conn = connect()
+    key = _schema_key()
+    if key not in _schema_ready_for:
+        with _schema_guard:
+            if key not in _schema_ready_for:
+                _run_schema_once(conn)
+                _schema_ready_for.add(key)
+    return conn
+
+
+def _run_schema_once(conn) -> None:
+    """Run schema DDL once per process, serialized across processes by a Postgres advisory lock.
+
+    Every _connect() used to run the DDL, so concurrent requests and the startup hook each
+    took AccessExclusiveLock on tasks and deadlocked. Deadlocks are retried.
+    """
+    for attempt in range(5):
+        try:
+            if using_postgres():
+                conn.execute('SELECT pg_advisory_xact_lock(%s)' % _SCHEMA_ADVISORY_KEY)
+            _create_schema(conn)
+            conn.commit()
+            return
+        except Exception as exc:
+            conn.rollback()
+            if _is_deadlock(exc) and attempt < 4:
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            raise
+
+
+def _create_schema(conn) -> None:
     task_log_id = 'BIGSERIAL PRIMARY KEY' if using_postgres() else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     schema = """
     CREATE TABLE IF NOT EXISTS tasks (
@@ -63,7 +109,6 @@ def _connect():
                 conn.execute(f"ALTER TABLE tasks ADD COLUMN {column} {definition}")
             except Exception:
                 pass
-    return conn
 
 
 def _decode(row):
