@@ -347,7 +347,7 @@ def recover_after_restart() -> list[str]:
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; resuming from verified checkpoint at step {state["step"]}.'))
                 recovering.append(row['id'])
             else:
-                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", (f'Worker restarted; not resumed automatically: {reason}.', 'Task stopped safely after worker restart; manual review is required before retrying.', now, row['id']))
+                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", (f'Worker restarted; not resumed automatically: {reason}. Press Retry to run the task again.', 'Task stopped safely after a worker restart; nothing was half-done, retrying is safe.', now, row['id']))
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; not resumed: {reason}.'))
         queued = conn.execute("SELECT id FROM tasks WHERE status='queued' ORDER BY created_at").fetchall()
         conn.commit()
@@ -372,7 +372,7 @@ def recover_waiting_on_restart() -> list[str]:
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', 'Worker restart detected while paused for human verification; the pending challenge was kept and the page will be re-checked.'))
                 ids.append(row['id'])
             else:
-                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted while paused for human verification; no safe checkpoint to restore the page.', 'Task stopped safely after worker restart; manual review is required before retrying.', now, row['id']))
+                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", ('Worker restarted while paused for human verification; no safe checkpoint to restore the page.', 'Task stopped safely after a worker restart; nothing was half-done, retrying is safe.', now, row['id']))
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', 'Worker restart detected while paused; no safe checkpoint, so the task was stopped.'))
         conn.commit()
     return ids

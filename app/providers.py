@@ -12,7 +12,7 @@ class ProviderError(RuntimeError):
 
 
 log = logging.getLogger(__name__)
-TRANSIENT_CHAT_STATUS_CODES = {502, 503, 504}
+TRANSIENT_CHAT_STATUS_CODES = {429, 502, 503, 504}
 _model_cache: tuple[str, float, list[str]] | None = None
 
 def _primary_headers() -> dict[str, str]:
@@ -126,7 +126,10 @@ async def primary_chat(messages, model=None) -> str:
                 continue
             if response.status_code not in TRANSIENT_CHAT_STATUS_CODES or attempt + 1 >= attempts:
                 break
-            delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
+            retry_after = response.headers.get('retry-after')
+            try: delay = min(float(retry_after), settings.primary_chat_retry_max_seconds) if retry_after else None
+            except ValueError: delay = None
+            if delay is None: delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
             log.warning("Phoenix AI /chat returned HTTP %s; retrying in %.2fs (%d/%d)", response.status_code, delay, attempt + 1, attempts - 1)
             await asyncio.sleep(delay)
         _raise_upstream(response, "/chat", chosen_model)
