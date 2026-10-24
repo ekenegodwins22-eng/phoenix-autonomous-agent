@@ -199,9 +199,29 @@ async def chat(messages, provider="auto", model=None):
         selected = await _validated_primary_model(model); return await primary_chat(messages, selected), "primary", selected
     if provider == "gemini": return await gemini_chat(messages, model), "gemini", model or settings.gemini_model
     if provider != "auto": raise ProviderError("Unsupported provider. Choose primary, gemini, or auto.")
+    # Auto mode: walk a small model chain so one rate-limited or flaky model
+    # doesn't kill the run. The requested model goes first, then the rest.
+    chain: list[str] = []
+    preferred = model or settings.primary_model
+    try:
+        available = await primary_models()
+    except Exception:
+        available = []
+    if preferred and (not available or preferred in available): chain.append(preferred)
+    chain += [m for m in available if m not in chain][:4]
+    chain_errors: list[str] = []
+    for candidate in chain:
+        try:
+            return await primary_chat(messages, candidate), "primary", candidate
+        except Exception as exc:
+            chain_errors.append(f"{candidate}: {exc}")
+            text = str(exc)
+            if 'HTTP 429' not in text and 'HTTP 50' not in text: break
     try:
         selected = await _validated_primary_model(model); return await primary_chat(messages, selected), "primary", selected
     except Exception as primary_error:
-        if not settings.gemini_api_key: raise ProviderError(f"Phoenix AI failed; Gemini is not configured: {primary_error}") from primary_error
+        if not settings.gemini_api_key:
+            detail = f" ({'; '.join(chain_errors)})" if chain_errors else ""
+            raise ProviderError(f"Phoenix AI failed; Gemini is not configured: {primary_error}{detail}") from primary_error
         try: return await gemini_chat(messages), "gemini", settings.gemini_model
         except Exception as fallback_error: raise ProviderError(f"Both providers failed. Phoenix AI={primary_error}; Gemini={fallback_error}") from fallback_error
