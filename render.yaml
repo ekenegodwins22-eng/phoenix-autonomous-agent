@@ -24,9 +24,7 @@ services:
       - key: AUTH_SECRET
         generateValue: true
       - key: DATABASE_URL
-        fromDatabase:
-          name: phoenix-db
-          property: connectionString
+        sync: false
       - key: MAILBOX_API_BASE_URL
         value: https://gmail-alias-api.senseiphoenix.name.ng
       - key: MAILBOX_API_TOKEN
