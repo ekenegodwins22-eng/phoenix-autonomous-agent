@@ -128,6 +128,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.check_browser:
         result = browser_installation_status()
-        print(result)
+        if result.get('available'):
+            print('browser check OK: %s' % result.get('executable'))
+        else:
+            print('browser check FAILED: %s' % result.get('error'))
         raise SystemExit(0 if result['available'] else 1)
-    print(resource_status())
+    status = resource_status()
+    print('resource check OK: disk %s free, memory %s' % (status.get('disk', {}).get('free_bytes'), status.get('memory', {}).get('used_percent')))
