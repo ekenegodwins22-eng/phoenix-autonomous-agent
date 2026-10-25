@@ -336,7 +336,7 @@ def recover_after_restart() -> list[str]:
     """
     from app import checkpoint as checkpoint_format
     with _connect() as conn:
-        rows = conn.execute("SELECT id,status,checkpoint,instruction FROM tasks WHERE status IN ('running','recovering')").fetchall()
+        rows = conn.execute("SELECT id,status,checkpoint,instruction,recovery_count FROM tasks WHERE status IN ('running','recovering')").fetchall()
         now = _now()
         recovering = []
         for row in rows:
