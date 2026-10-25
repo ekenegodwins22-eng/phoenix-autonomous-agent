@@ -347,8 +347,16 @@ def recover_after_restart() -> list[str]:
                 conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; resuming from verified checkpoint at step {state["step"]}.'))
                 recovering.append(row['id'])
             else:
-                conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", (f'Worker restarted; not resumed automatically: {reason}. Press Retry to run the task again.', 'Task stopped safely after a worker restart; nothing was half-done, retrying is safe.', now, row['id']))
-                conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; not resumed: {reason}.'))
+                # No resumable checkpoint (e.g. the worker died before the first one was
+                # written). The task stopped safely, so re-queue it automatically instead
+                # of failing it, bounded by the same recovery-attempt cap as manual retries.
+                attempts = int(getattr(settings, 'max_task_recovery_attempts', 2) or 0)
+                if attempts > row['recovery_count']:
+                    conn.execute("UPDATE tasks SET status='queued', progress='Worker restarted before any checkpoint; task re-queued automatically.', error=NULL, human_help=NULL, waiting_details=NULL, worker_token=NULL, recovery_count=recovery_count+1, updated_at=? WHERE id=?", (now, row['id']))
+                    conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; not resumable ({reason}); re-queued automatically.'))
+                else:
+                    conn.execute("UPDATE tasks SET status='failed', error=?, progress=?, human_help=NULL, waiting_details=NULL, worker_token=NULL, updated_at=? WHERE id=?", (f'Worker restarted; not resumed automatically: {reason}. Press Retry to run the task again.', 'Task stopped safely after a worker restart; nothing was half-done, retrying is safe.', now, row['id']))
+                    conn.execute('INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)', (row['id'], now, 'recovery', f'Worker restart detected; not resumed: {reason}.'))
         queued = conn.execute("SELECT id FROM tasks WHERE status='queued' ORDER BY created_at").fetchall()
         conn.commit()
     return [row['id'] for row in queued] + recovering
