@@ -839,7 +839,7 @@ class BrowserSession(BaseModel):
 					# Global timeout prevents connect() from hanging indefinitely on
 					# slow/broken WebSocket connections (common on Lambda → remote browser)
 					try:
-						await asyncio.wait_for(self.connect(cdp_url=self.cdp_url), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '15.0')))
+						await asyncio.wait_for(self.connect(cdp_url=self.cdp_url), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '90.0')))
 					except TimeoutError:
 						# Timeout cancels connect() via CancelledError, which bypasses
 						# connect()'s `except Exception` cleanup (CancelledError is BaseException).
@@ -861,7 +861,7 @@ class BrowserSession(BaseModel):
 							self.session_manager = None
 						self.agent_focus_target_id = None
 						raise RuntimeError(
-							f'connect() timed out after 15s — CDP connection to {self.cdp_url} is too slow or unresponsive'
+							f'connect() timed out — CDP connection to {self.cdp_url} is too slow or unresponsive'
 						)
 					assert self.cdp_client is not None
 
@@ -2274,7 +2274,7 @@ class BrowserSession(BaseModel):
 				self.logger.warning(f'🔄 WebSocket reconnection attempt {attempt}/{max_attempts}...')
 
 				try:
-					await asyncio.wait_for(self.reconnect(), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '15.0')))
+					await asyncio.wait_for(self.reconnect(), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '90.0')))
 					# Success
 					downtime = time.time() - start_time
 					self.event_bus.dispatch(
