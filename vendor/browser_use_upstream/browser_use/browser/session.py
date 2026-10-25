@@ -1,6 +1,7 @@
 """Event-driven browser session with backwards compatibility."""
 
 import asyncio
+import os
 import logging
 import re
 import time
@@ -838,7 +839,7 @@ class BrowserSession(BaseModel):
 					# Global timeout prevents connect() from hanging indefinitely on
 					# slow/broken WebSocket connections (common on Lambda → remote browser)
 					try:
-						await asyncio.wait_for(self.connect(cdp_url=self.cdp_url), timeout=15.0)
+						await asyncio.wait_for(self.connect(cdp_url=self.cdp_url), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '15.0')))
 					except TimeoutError:
 						# Timeout cancels connect() via CancelledError, which bypasses
 						# connect()'s `except Exception` cleanup (CancelledError is BaseException).
@@ -2273,7 +2274,7 @@ class BrowserSession(BaseModel):
 				self.logger.warning(f'🔄 WebSocket reconnection attempt {attempt}/{max_attempts}...')
 
 				try:
-					await asyncio.wait_for(self.reconnect(), timeout=15.0)
+					await asyncio.wait_for(self.reconnect(), timeout=float(os.getenv('CDP_CONNECT_TIMEOUT', '15.0')))
 					# Success
 					downtime = time.time() - start_time
 					self.event_bus.dispatch(

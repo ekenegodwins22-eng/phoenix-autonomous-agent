@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -157,7 +158,7 @@ class LocalBrowserWatchdog(BaseWatchdog):
 				process = psutil.Process(subprocess.pid)
 
 				# Wait for CDP to be ready and get the URL
-				cdp_url = await self._wait_for_cdp_url(debug_port, process=process)
+				cdp_url = await self._wait_for_cdp_url(debug_port, timeout=float(os.getenv('CDP_START_TIMEOUT', '30')), process=process)
 
 				# Success! Clean up only the temp dirs we created but didn't use
 				currently_used_dir = str(profile.user_data_dir)
