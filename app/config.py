@@ -1,12 +1,15 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
     app_name: str = "Phoenix Autonomous Agent"
     app_url: str = "http://127.0.0.1:8000"
-    primary_base_url: str = "https://concerned-swordfish-suhailtechlnfo-01fd2de0.koyeb.app"
+    # Legacy PRIMARY_* names: kept so existing deploy env keeps working. They seed the ollama
+    # engine when OLLAMA_* is not set.
+    primary_base_url: str = ""
     primary_api_key: str = ""
-    primary_model: str = "deepseek-v4-flash"
+    primary_model: str = ""
     primary_timeout_seconds: float = 60
     primary_chat_retry_attempts: int = 3
     primary_chat_retry_base_seconds: float = 0.5
@@ -14,6 +17,16 @@ class Settings(BaseSettings):
     primary_model_cache_seconds: float = 30
     primary_model_discovery_attempts: int = 2
     primary_model_discovery_retry_base_seconds: float = 0.5
+    # Local engines (OpenAI-compatible: /v1/models and /v1/chat/completions).
+    ollama_base_url: str = ""
+    ollama_api_key: str = ""
+    ollama_model: str = ""
+    llamacpp_base_url: str = ""
+    llamacpp_api_key: str = ""
+    llamacpp_model: str = ""
+    smollm2_base_url: str = ""
+    smollm2_api_key: str = ""
+    smollm2_model: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro"
@@ -56,5 +69,18 @@ class Settings(BaseSettings):
     phoenix_worker_id: str = "primary-web"
     phoenix_worker_poll_seconds: float = 2.0
     phoenix_worker_idle_exit_seconds: int = 0
+
+    @model_validator(mode="after")
+    def _legacy_primary_fallbacks(self):
+        # Old single-router deploys set PRIMARY_* and point it at an OpenAI-compatible engine.
+        # Use them for ollama only when OLLAMA_* is absent, so the current deploy env still works.
+        if not self.ollama_base_url and self.primary_base_url:
+            self.ollama_base_url = self.primary_base_url
+        if not self.ollama_api_key and self.primary_api_key:
+            self.ollama_api_key = self.primary_api_key
+        if not self.ollama_model and self.primary_model:
+            self.ollama_model = self.primary_model
+        return self
+
 
 settings = Settings()

@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pathlib import Path
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from app.config import settings
 from app.models import TaskRequest, TaskStatus, TaskMessage, TaskMessageRequest, now_utc
 from app.agent.execution_loop import HumanInterventionRequired, TaskBlocked, TaskIncomplete, execute_task
@@ -22,6 +22,7 @@ from app.runner import DEEP_RESEARCH_STEP_MULTIPLIER
 from app import checkpoint as checkpoint_format
 from app.agent.prompt_loader import InstructionConfigError, instruction_status
 from app.proxy import configured_proxy, public_status
+from app import proxy_store
 
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 app = FastAPI(title=settings.app_name, version="0.4.0", description="Durable sequential browser agent with persistent task sessions.")
@@ -179,14 +180,70 @@ async def models(user=Depends(current_user)):
     """Return selectable models for the authenticated workspace."""
     return await available_models(user['id'])
 
+class ProxyBody(BaseModel):
+    label: str = Field(default='', max_length=120)
+    server: str = Field(min_length=8, max_length=300)
+    username: str | None = Field(default=None, max_length=200)
+    password: str | None = Field(default=None, max_length=200)
+
+
+class ProxyPatch(BaseModel):
+    label: str | None = Field(default=None, max_length=120)
+    server: str | None = Field(default=None, max_length=300)
+    username: str | None = Field(default=None, max_length=200)
+    password: str | None = Field(default=None, max_length=200)
+    active: bool | None = None
+
+
+@app.get('/proxies')
+async def list_proxies_route(user=Depends(current_user)):
+    return {'proxies': proxy_store.list_proxies(user['id'])}
+
+
+@app.post('/proxies', status_code=201)
+async def create_proxy_route(body: ProxyBody, user=Depends(current_user)):
+    try:
+        return proxy_store.create_proxy(user['id'], label=body.label, server=body.server, username=body.username, password=body.password, source='custom')
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.patch('/proxies/{proxy_id}')
+async def update_proxy_route(proxy_id: int, body: ProxyPatch, user=Depends(current_user)):
+    try:
+        item = proxy_store.update_proxy(user['id'], proxy_id, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not item:
+        raise HTTPException(status_code=404, detail='Proxy not found')
+    return item
+
+
+@app.delete('/proxies/{proxy_id}')
+async def delete_proxy_route(proxy_id: int, user=Depends(current_user)):
+    if not proxy_store.delete_proxy(user['id'], proxy_id):
+        raise HTTPException(status_code=404, detail='Proxy not found')
+    return {'deleted': True, 'id': proxy_id}
+
+
+@app.post('/proxies/scrape')
+async def scrape_proxies_route(user=Depends(current_user)):
+    """Fetch up to 25 free public proxies (TheSpeedX lists). Each is validated and saved as source=scraper."""
+    return await proxy_store.scrape_free(user['id'])
+
+
 @app.post("/tasks", response_model=TaskStatus, status_code=202)
 async def create_task(request: TaskRequest, user=Depends(current_user)):
+    if request.proxy_id is not None:
+        if not proxy_store.get_proxy(user['id'], request.proxy_id):
+            raise HTTPException(status_code=422, detail='Selected proxy not found')
+        request.proxy_mode = 'configured'
     proxy = configured_proxy() if request.proxy_mode == 'configured' else None
     if request.proxy_mode == 'configured' and not proxy:
         raise HTTPException(status_code=422, detail='Configured proxy mode requested but no protected proxy is configured')
     if request.proxy_mode == 'direct' and settings.browser_proxy_required:
         raise HTTPException(status_code=422, detail='A proxy is required by server configuration for this deployment')
-    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort, fast_mode=request.fast_mode, deep_research=request.deep_research, browser_target=request.browser_target)
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort, fast_mode=request.fast_mode, deep_research=request.deep_research, browser_target=request.browser_target, proxy_id=request.proxy_id)
     asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
@@ -277,6 +334,7 @@ async def run_task(task_id: str):
         async def save_checkpoint(checkpoint):
             task_store.save_checkpoint(task_id, checkpoint)
         request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct', browser_target=item.get('browser_target'))
+        run_proxy = proxy_store.resolve_for_run(item['owner_id'], item['proxy_id']) if item.get('proxy_id') else None
         owner_cfg = settings_store.get_settings(item['owner_id'])
         run_opts.run_options.set({
             'fast_mode': bool(item.get('fast_mode')),
@@ -292,7 +350,7 @@ async def run_task(task_id: str):
                 raise asyncio.CancelledError()
             # The global lock is held only while actively executing. It is released during a
             # human pause (clock.pause) so other tasks are not blocked by a waiting person.
-            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume, browser_target=request.browser_target))
+            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume, browser_target=request.browser_target, run_proxy=run_proxy))
             result = await _run_with_active_budget(execution, clock)
         finally:
             clock.release()

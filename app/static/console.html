@@ -282,6 +282,10 @@ label.lab:first-child{margin-top:0}
               </select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
+            <label class="chipsel" id="homeProxyWrap" title="Proxy for the task">
+              <select id="homeProxy" aria-label="Proxy"><option value="">No proxy</option></select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
             <button class="ib round" id="homeDeep" type="button" aria-pressed="false" aria-label="Deep research" title="Deep research: longer run, structured report">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             </button>
@@ -465,6 +469,24 @@ label.lab:first-child{margin-top:0}
             <button class="btn small" id="browserReset" type="button">Reset</button>
             <span id="browserMsg" class="hint" style="margin:0"></span>
           </div>
+          <div class="sect" id="proxySect">
+            <h4>Proxies</h4>
+            <div class="hint" style="margin:0 0 10px">Local browser runs use the proxy you pick per task. Passwords are never shown after saving.</div>
+            <div id="proxyList" class="hint" style="margin:0 0 10px">No proxies yet.</div>
+            <label class="lab" for="pxLabel">Label</label>
+            <input class="field" id="pxLabel" placeholder="my proxy" maxlength="120">
+            <label class="lab" for="pxServer">Server</label>
+            <input class="field" id="pxServer" placeholder="http://host:port or socks5://host:port">
+            <label class="lab" for="pxUser">Username (optional)</label>
+            <input class="field" id="pxUser" autocomplete="off">
+            <label class="lab" for="pxPass">Password (optional)</label>
+            <input class="field" id="pxPass" type="password" autocomplete="new-password">
+            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <button class="btn small primary" id="pxAdd" type="button">Add proxy</button>
+              <button class="btn small" id="pxScrape" type="button">Fetch 25 free proxies</button>
+            </div>
+            <div class="hint" id="pxMsg" style="margin-top:10px"></div>
+          </div>
         </div>
       </div>
       <div class="tabpane" data-pane="config">
@@ -519,7 +541,7 @@ let logsOpen=false;
 let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
-const cfg={model:'auto|',effort:'',fast:false,deep:false,browser:'remote'};
+const cfg={model:'auto|',effort:'',fast:false,deep:false,browser:'remote',proxy_id:null};
 
 async function api(path,opts={}){
   const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
@@ -596,7 +618,7 @@ document.querySelectorAll('.tab[data-tab]').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab[data-tab]').forEach(x=>{const on=x===t;x.classList.toggle('on',on);x.setAttribute('aria-selected',String(on))});
   document.querySelectorAll('.tabpane').forEach(pn=>pn.classList.toggle('on',pn.dataset.pane===t.dataset.tab));
   if(t.dataset.tab==='agent')loadAgentSettings();
-  if(t.dataset.tab==='browser')loadBrowserSettings();
+  if(t.dataset.tab==='browser'){loadBrowserSettings();loadProxies()}
 });
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{closePanels();$('scrim').classList.remove('open')});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){setSide(false);closePanels();$('scrim').classList.remove('open')}});
@@ -835,6 +857,8 @@ $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
 $('taskModel').onchange=()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task'};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
 $('homeBrowser').onchange=()=>{cfg.browser=$('homeBrowser').value};
+$('homeProxy').onchange=()=>{cfg.proxy_id=$('homeProxy').value?Number($('homeProxy').value):null};
+loadProxies();
 $('homeSubmit').onclick=async()=>{
   $('homeErr').textContent='';
   const instruction=$('homeInstruction').value.trim();
@@ -843,6 +867,7 @@ $('homeSubmit').onclick=async()=>{
   const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
   if(cfg.effort)body.effort=cfg.effort;
   body.browser_target=cfg.browser;
+  if(cfg.proxy_id){body.proxy_id=cfg.proxy_id;body.proxy_mode='configured'}
   if(cfg.fast)body.fast_mode=true;
   if(cfg.deep)body.deep_research=true;
   if(model)body.model=model;
@@ -939,6 +964,40 @@ $('agentReset').onclick=async()=>{
   const base=ownerSettings||await loadOwnerSettings();
   $('agentPrompt').value='';$('agentMaxSteps').value='';
   await saveOwnerSettings({agent:{system_prompt:'',max_steps:null},browser:base.browser},$('agentMsg'));
+};
+
+let proxyList=[];
+function renderProxyDropdown(){
+  const sel=$('homeProxy');const keep=sel.value;
+  sel.innerHTML='<option value="">No proxy</option>'+proxyList.filter(p=>p.active).map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
+  if(keep&&[...sel.options].some(o=>o.value===keep))sel.value=keep;
+}
+function renderProxyList(){
+  const box=$('proxyList');
+  if(!proxyList.length){box.textContent='No proxies yet.';return}
+  box.innerHTML='';
+  proxyList.forEach(p=>{
+    const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center;justify-content:space-between;margin:6px 0;padding:8px 10px;border:1px solid #2a2f3a;border-radius:8px;background:#11151d';
+    const info=document.createElement('div');info.style.cssText='min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    info.innerHTML=`<strong>${p.label}</strong> <span class="hint" style="margin:0">${p.server}${p.username?' · user '+p.username:''}${p.password?' · pass '+p.password:''} · ${p.source}${p.active?'':' · off'}</span>`;
+    const del=document.createElement('button');del.className='btn small';del.type='button';del.textContent='Delete';
+    del.onclick=async()=>{try{await api('/proxies/'+p.id,{method:'DELETE'});await loadProxies()}catch(e){$('pxMsg').textContent=e.message}};
+    row.append(info,del);box.append(row);
+  });
+}
+async function loadProxies(){
+  try{const d=await api('/proxies');proxyList=d.proxies||[];renderProxyList();renderProxyDropdown()}catch(e){$('pxMsg').textContent=e.message}
+}
+$('pxAdd').onclick=async()=>{
+  $('pxMsg').textContent='';
+  const server=$('pxServer').value.trim();
+  if(!server){$('pxMsg').textContent='Enter a proxy server.';return}
+  const body={label:$('pxLabel').value.trim(),server,username:$('pxUser').value.trim()||null,password:$('pxPass').value||null};
+  try{await api('/proxies',{method:'POST',body:JSON.stringify(body)});$('pxLabel').value='';$('pxServer').value='';$('pxUser').value='';$('pxPass').value='';$('pxMsg').textContent='Saved.';await loadProxies()}catch(e){$('pxMsg').textContent=e.message}
+};
+$('pxScrape').onclick=async()=>{
+  $('pxMsg').textContent='Fetching free proxies…';
+  try{const d=await api('/proxies/scrape',{method:'POST'});$('pxMsg').textContent=`Added ${d.count} of up to ${d.limit} free proxies. Check them before relying on them.`;await loadProxies()}catch(e){$('pxMsg').textContent=e.message}
 };
 async function loadBrowserSettings(){
   try{const d=await loadOwnerSettings();const b=d.browser;

@@ -63,6 +63,7 @@ def _run_schema_once(conn) -> None:
 
 
 def _create_schema(conn) -> None:
+
     task_log_id = 'BIGSERIAL PRIMARY KEY' if using_postgres() else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     schema = """
     CREATE TABLE IF NOT EXISTS tasks (
@@ -72,7 +73,7 @@ def _create_schema(conn) -> None:
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result TEXT, error TEXT,
       provider TEXT, model TEXT, recovery_count INTEGER NOT NULL DEFAULT 0,
       cancel_requested INTEGER NOT NULL DEFAULT 0, worker_token TEXT, checkpoint TEXT,
-      proxy_mode TEXT NOT NULL DEFAULT 'direct', proxy_identifier TEXT
+      proxy_mode TEXT NOT NULL DEFAULT 'direct', proxy_identifier TEXT, proxy_id INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_owner_updated ON tasks(owner_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at);
@@ -127,12 +128,12 @@ def _slug(instruction: str, task_id: str) -> str:
     return f'{words}-{task_id[:6]}'
 
 
-def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None, effort: str | None = None, fast_mode: bool = False, deep_research: bool = False, browser_target: str | None = None) -> dict:
+def create_task(*, owner_id: int, instruction: str, start_url: str | None, timeout_seconds: int | None, provider: str, model: str | None, proxy_mode: str = 'direct', proxy_identifier: str | None = None, effort: str | None = None, fast_mode: bool = False, deep_research: bool = False, browser_target: str | None = None, proxy_id: int | None = None) -> dict:
     task_id = secrets.token_hex(8)
     slug = _slug(instruction, task_id)
     now = _now()
     with _connect() as conn:
-        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier,effort,fast_mode,deep_research,browser_target) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier,effort,int(bool(fast_mode)),int(bool(deep_research)),browser_target if browser_target in ('remote','local') else None))
+        conn.execute("INSERT INTO tasks (id,slug,owner_id,instruction,start_url,timeout_seconds,status,progress,created_at,updated_at,provider,model,proxy_mode,proxy_identifier,effort,fast_mode,deep_research,browser_target,proxy_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (task_id,slug,owner_id,instruction,start_url,timeout_seconds,'queued','Queued; waiting for the execution slot.',now,now,provider,model,proxy_mode,proxy_identifier,effort,int(bool(fast_mode)),int(bool(deep_research)),browser_target if browser_target in ('remote','local') else None,proxy_id))
         conn.execute("INSERT INTO task_logs (task_id,created_at,level,message) VALUES (?,?,?,?)", (task_id,now,'info','Task accepted and queued.'))
         conn.commit()
     return get_task(task_id)

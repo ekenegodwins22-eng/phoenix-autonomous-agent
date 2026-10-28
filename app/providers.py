@@ -1,4 +1,14 @@
-"""Provider clients: Phoenix AI Router (default) and opt-in user-key providers (Gemini, OpenAI, Anthropic)."""
+"""Model provider clients.
+
+Three local engines, all OpenAI-compatible (GET /v1/models, POST /v1/chat/completions):
+  ollama    -> OLLAMA_BASE_URL     (falls back to legacy PRIMARY_BASE_URL)
+  llamacpp  -> LLAMACPP_BASE_URL
+  smollm2   -> SMOLLM2_BASE_URL
+
+Auto chain: ollama -> llama.cpp -> smollm2. An engine that fails discovery is skipped.
+Then user-saved keys (gemini, openai, anthropic) act as optional fallbacks. Gemini is never
+used unless the owner saved a key for it.
+"""
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
 import asyncio
@@ -14,24 +24,50 @@ class ProviderError(RuntimeError):
 
 log = logging.getLogger(__name__)
 TRANSIENT_CHAT_STATUS_CODES = {429, 502, 503, 504}
-_model_cache: tuple[str, float, list[str]] | None = None
+LOCAL_ENGINES = ("ollama", "llamacpp", "smollm2")
+ENGINE_LABELS = {"ollama": "Ollama", "llamacpp": "llama.cpp", "smollm2": "SmolLM2 box"}
+_model_cache: dict[str, tuple[str, float, list[str]]] = {}
 
-def _primary_headers() -> dict[str, str]:
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    if settings.primary_api_key:
-        headers["X-API-Key"] = settings.primary_api_key
-    return headers
 
-def _primary_url(path: str) -> str:
-    base = settings.primary_base_url.rstrip("/")
+def _engine_config(engine: str) -> tuple[str, str, str]:
+    """Return (base_url, api_key, default_model) for a local engine."""
+    if engine == "ollama":
+        return settings.ollama_base_url, settings.ollama_api_key, settings.ollama_model
+    if engine == "llamacpp":
+        return settings.llamacpp_base_url, settings.llamacpp_api_key, settings.llamacpp_model
+    if engine == "smollm2":
+        return settings.smollm2_base_url, settings.smollm2_api_key, settings.smollm2_model
+    raise ProviderError(f"Unsupported local engine: {engine}")
+
+
+def _normalize_base(base: str) -> str:
+    """Return the OpenAI-compatible base ending in /v1 (no trailing slash), or '' if unset."""
+    base = (base or "").strip().rstrip("/")
     if not base:
-        raise ProviderError("PRIMARY_BASE_URL is not configured")
+        return ""
+    return base if base.endswith("/v1") else f"{base}/v1"
+
+
+def _engine_url(engine: str, path: str) -> str:
+    base = _normalize_base(_engine_config(engine)[0])
+    if not base:
+        raise ProviderError(f"{ENGINE_LABELS[engine]} base URL is not configured")
     return f"{base}/{path.lstrip('/')}"
 
-def _raise_upstream(response: httpx.Response, operation: str, model: str | None = None) -> None:
+
+def _engine_headers(engine: str) -> dict[str, str]:
+    key = _engine_config(engine)[1]
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if key:
+        headers["X-API-Key"] = key
+    return headers
+
+
+def _raise_upstream(response: httpx.Response, operation: str, model: str | None = None, label: str = "Provider") -> None:
     if response.is_error:
         suffix = f" for model {model}" if model else ""
-        raise ProviderError(f"Phoenix AI {operation} failed with HTTP {response.status_code}{suffix}")
+        raise ProviderError(f"{label} {operation} failed with HTTP {response.status_code}{suffix}")
+
 
 def _extract_model_ids(data) -> list[str]:
     found, seen = [], set()
@@ -51,49 +87,62 @@ def _extract_model_ids(data) -> list[str]:
     walk(data)
     return found
 
-async def primary_models() -> list[str]:
-    """List Phoenix AI models via the OpenAI-compatible GET {base}/models.
 
-    If the list call fails (404, timeout, empty list), fall back to just PRIMARY_MODEL
-    so chat still runs against the configured model.
-    """
-    if not settings.primary_api_key:
-        raise ProviderError("PRIMARY_API_KEY is not configured")
-    global _model_cache
-    cache_key = settings.primary_base_url.rstrip('/')
+async def engine_models(engine: str) -> list[str]:
+    """List models via GET {base}/v1/models. Raises ProviderError if the engine is not usable."""
+    label = ENGINE_LABELS[engine]
+    base, key, default_model = _engine_config(engine)
+    if not _normalize_base(base):
+        raise ProviderError(f"{label} base URL is not configured")
+    cache_key = _normalize_base(base)
+    cached = _model_cache.get(engine)
     now = time.monotonic()
-    if _model_cache and _model_cache[0] == cache_key and now - _model_cache[1] < settings.primary_model_cache_seconds:
-        return list(_model_cache[2])
+    if cached and cached[0] == cache_key and now - cached[1] < settings.primary_model_cache_seconds:
+        return list(cached[2])
     attempts = max(1, settings.primary_model_discovery_attempts)
-    last_error = None
+    last_error: ProviderError | None = None
     for attempt in range(attempts):
         try:
             async with httpx.AsyncClient(timeout=min(settings.primary_timeout_seconds, 20)) as client:
-                response = await client.get(_primary_url("models"), headers=_primary_headers())
-            _raise_upstream(response, "/models")
+                response = await client.get(_engine_url(engine, "models"), headers=_engine_headers(engine))
+            if response.status_code == 404 and default_model:
+                # Engine without a /v1/models route: trust the configured model instead.
+                _model_cache[engine] = (cache_key, time.monotonic(), [default_model])
+                return [default_model]
+            _raise_upstream(response, "/v1/models", label=label)
             models = _extract_model_ids(response.json())
             if not models:
-                raise ProviderError("Phoenix AI /models returned no recognizable model IDs")
-            _model_cache = (cache_key, time.monotonic(), models)
+                raise ProviderError(f"{label} /v1/models returned no model IDs")
+            _model_cache[engine] = (cache_key, time.monotonic(), models)
             return models
         except ProviderError as exc:
             last_error = exc
-            retryable = 'HTTP 502' in str(exc) or 'HTTP 503' in str(exc) or 'HTTP 504' in str(exc)
+            retryable = any(f"HTTP {code}" in str(exc) for code in (502, 503, 504))
         except (httpx.HTTPError, ValueError) as exc:
-            last_error = ProviderError(f"Phoenix AI model discovery failed: {type(exc).__name__}")
+            last_error = ProviderError(f"{label} model discovery failed: {type(exc).__name__}")
             retryable = True
         if not retryable or attempt + 1 >= attempts:
             break
         delay = min(settings.primary_model_discovery_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
-        log.warning("Phoenix AI /models failed (%s); retrying in %.2fs (%d/%d)", last_error, delay, attempt + 1, attempts - 1)
+        log.warning("%s /v1/models failed (%s); retrying in %.2fs (%d/%d)", label, last_error, delay, attempt + 1, attempts - 1)
         await asyncio.sleep(delay)
-    fallback = (settings.primary_model or "").strip()
-    log.warning("Phoenix AI model list unavailable (%s); using PRIMARY_MODEL=%s only", last_error, fallback or "none")
-    return [fallback] if fallback else []
+    raise last_error or ProviderError(f"{label} model discovery failed")
+
+
+def _prompt_messages(messages) -> list[dict]:
+    return [{"role": str(m.get("role", "user")), "content": str(m.get("content", ""))} for m in messages]
+
 
 def _extract_chat_text(data) -> str:
     if isinstance(data, str): return data
-    if not isinstance(data, dict): raise ProviderError("Phoenix AI chat returned an unexpected response type")
+    if not isinstance(data, dict): raise ProviderError("chat returned an unexpected response type")
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if isinstance(message, dict) and isinstance(message.get("content"), str) and message["content"].strip():
+            return message["content"]
+        if isinstance(choices[0], dict) and isinstance(choices[0].get("text"), str) and choices[0]["text"].strip():
+            return choices[0]["text"]
     for key in ("response", "reply", "content", "message", "text", "output", "generated_text"):
         value = data.get(key)
         if isinstance(value, str) and value.strip(): return value
@@ -104,80 +153,80 @@ def _extract_chat_text(data) -> str:
         if isinstance(data.get(key), (dict, str)):
             try: return _extract_chat_text(data[key])
             except ProviderError: pass
-    raise ProviderError("Phoenix AI chat response did not contain a recognized text field")
+    raise ProviderError("chat response did not contain a recognized text field")
 
-async def _validated_primary_model(model: str | None) -> str:
-    models = await primary_models()
-    chosen = model or settings.primary_model or models[0]
-    if chosen not in models: raise ProviderError(f"Selected Phoenix model is unavailable: {chosen}")
+
+async def _validated_engine_model(engine: str, model: str | None) -> str:
+    models = await engine_models(engine)
+    default = _engine_config(engine)[2]
+    chosen = model or (default if default in models else models[0])
+    if chosen not in models:
+        raise ProviderError(f"Selected model is unavailable on {ENGINE_LABELS[engine]}: {chosen}")
     return chosen
 
-def _prompt(messages) -> str:
-    return "\n\n".join(f'{str(item.get("role", "user")).upper()}:\n{item.get("content", "")}' for item in messages)
 
-async def primary_chat(messages, model=None) -> str:
-    chosen_model = await _validated_primary_model(model)
-    payload = {"model": chosen_model, "message": _prompt(messages)}
+async def engine_chat(engine: str, messages, model: str | None = None) -> str:
+    """POST {base}/v1/chat/completions with retries on 502/503/504 and network errors."""
+    label = ENGINE_LABELS[engine]
+    chosen_model = await _validated_engine_model(engine, model)
+    payload = {"model": chosen_model, "messages": _prompt_messages(messages), "stream": False}
     attempts = max(1, settings.primary_chat_retry_attempts)
     try:
         response = None
         for attempt in range(attempts):
             try:
                 async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
-                    response = await client.post(_primary_url("chat"), headers=_primary_headers(), json=payload)
+                    response = await client.post(_engine_url(engine, "chat/completions"), headers=_engine_headers(engine), json=payload)
             except httpx.RequestError as exc:
                 if attempt + 1 >= attempts:
-                    raise ProviderError(f"Phoenix AI chat failed: {type(exc).__name__}") from exc
+                    raise ProviderError(f"{label} chat failed: {type(exc).__name__}") from exc
                 delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
-                log.warning("Phoenix AI /chat transient network failure (%s); retrying in %.2fs (%d/%d)", type(exc).__name__, delay, attempt + 1, attempts - 1)
+                log.warning("%s chat transient network failure (%s); retrying in %.2fs (%d/%d)", label, type(exc).__name__, delay, attempt + 1, attempts - 1)
                 await asyncio.sleep(delay)
                 continue
             if response.status_code not in TRANSIENT_CHAT_STATUS_CODES or attempt + 1 >= attempts:
                 break
-            retry_after = response.headers.get('retry-after')
+            retry_after = response.headers.get("retry-after")
             try: delay = min(float(retry_after), settings.primary_chat_retry_max_seconds) if retry_after else None
             except ValueError: delay = None
             if delay is None: delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
-            log.warning("Phoenix AI /chat returned HTTP %s; retrying in %.2fs (%d/%d)", response.status_code, delay, attempt + 1, attempts - 1)
+            log.warning("%s chat returned HTTP %s; retrying in %.2fs (%d/%d)", label, response.status_code, delay, attempt + 1, attempts - 1)
             await asyncio.sleep(delay)
-        _raise_upstream(response, "/chat", chosen_model)
+        _raise_upstream(response, "/v1/chat/completions", chosen_model, label=label)
         return _extract_chat_text(response.json())
     except ProviderError: raise
     except (httpx.HTTPError, ValueError) as exc:
-        raise ProviderError(f"Phoenix AI chat failed: {type(exc).__name__}") from exc
+        raise ProviderError(f"{label} chat failed: {type(exc).__name__}") from exc
 
-def _stream_piece(data) -> str:
-    try: return _extract_chat_text(data)
-    except ProviderError:
-        if isinstance(data, dict):
-            for key in ("delta", "token", "chunk"):
-                value = data.get(key)
-                if isinstance(value, str): return value
-                if isinstance(value, dict):
-                    try: return _extract_chat_text(value)
-                    except ProviderError: pass
-        return ""
 
-async def primary_chat_stream(messages, model=None) -> AsyncIterator[str]:
-    """Yield text from the custom SSE/line stream at POST /chat/stream."""
-    chosen_model = await _validated_primary_model(model)
+async def engine_chat_stream(engine: str, messages, model: str | None = None) -> AsyncIterator[str]:
+    """Stream OpenAI-style SSE deltas from {base}/v1/chat/completions (stream=true)."""
+    label = ENGINE_LABELS[engine]
+    chosen_model = await _validated_engine_model(engine, model)
+    payload = {"model": chosen_model, "messages": _prompt_messages(messages), "stream": True}
     try:
         async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
-            async with client.stream("POST", _primary_url("chat/stream"), headers=_primary_headers(), json={"model": chosen_model, "message": _prompt(messages)}) as response:
-                _raise_upstream(response, "/chat/stream", chosen_model)
+            async with client.stream("POST", _engine_url(engine, "chat/completions"), headers=_engine_headers(engine), json=payload) as response:
+                _raise_upstream(response, "/v1/chat/completions", chosen_model, label=label)
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line or line.startswith(":"): continue
                     if line.startswith("data:"): line = line[5:].strip()
                     if line == "[DONE]": break
-                    try: piece = _stream_piece(json.loads(line))
-                    except json.JSONDecodeError: piece = line
-                    if piece: yield piece
+                    try: data = json.loads(line)
+                    except json.JSONDecodeError: continue
+                    choices = data.get("choices") if isinstance(data, dict) else None
+                    delta = choices[0].get("delta", {}) if choices and isinstance(choices[0], dict) else {}
+                    piece = delta.get("content") if isinstance(delta, dict) else None
+                    if isinstance(piece, str) and piece: yield piece
     except ProviderError: raise
     except httpx.HTTPError as exc:
-        raise ProviderError(f"Phoenix AI streaming chat failed: {type(exc).__name__}") from exc
+        raise ProviderError(f"{label} streaming chat failed: {type(exc).__name__}") from exc
 
-async def gemini_models(): return [m.strip() for m in settings.gemini_models.split(",") if m.strip()]
+
+def _prompt(messages) -> str:
+    return "\n\n".join(f'{str(item.get("role", "user")).upper()}:\n{item.get("content", "")}' for item in messages)
+
 
 # Owner whose task is running. Set by the task runner before it starts execute_task, so the
 # router can read that owner's saved provider keys without changing every call signature.
@@ -207,7 +256,7 @@ async def gemini_chat(messages, model=None, api_key=None):
     try:
         async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
             response = await client.post(f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent", params={"key": key}, json={"contents": [{"role": "user", "parts": [{"text": _prompt(messages)}]}], "generationConfig": {"temperature": 0.2}})
-        _raise_upstream(response, "Gemini")
+        _raise_upstream(response, "request", label="Gemini")
         data = response.json(); return data["candidates"][0]["content"]["parts"][0]["text"]
     except ProviderError: raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -221,7 +270,7 @@ async def openai_chat(messages, model=None, api_key=None):
     try:
         async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
             response = await client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={"model": model or OPENAI_MODEL_DEFAULT, "messages": [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]})
-        _raise_upstream(response, "OpenAI")
+        _raise_upstream(response, "request", label="OpenAI")
         return response.json()["choices"][0]["message"]["content"]
     except ProviderError: raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -236,69 +285,77 @@ async def anthropic_chat(messages, model=None, api_key=None):
     try:
         async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
             response = await client.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"}, json=payload)
-        _raise_upstream(response, "Anthropic")
+        _raise_upstream(response, "request", label="Anthropic")
         return "".join(b.get("text", "") for b in response.json()["content"] if b.get("type") == "text")
     except ProviderError: raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Anthropic response did not contain generated text: {type(exc).__name__}") from exc
 
 _USER_CHAT = {"gemini": gemini_chat, "openai": openai_chat, "anthropic": anthropic_chat}
+_USER_LABELS = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
+
 
 async def available_models(owner_id: int | None = None):
-    result = {"providers": [], "default_provider": "primary", "default_model": settings.primary_model}
-    try:
-        models = await primary_models(); result["providers"].append({"id":"primary","label":"Phoenix AI Router","available":True,"models":[{"id":m,"label":m} for m in models]})
-    except Exception as exc:
-        result["providers"].append({"id":"primary","label":"Phoenix AI Router","available":False,"error":str(exc)[:180],"models":[]})
+    default_provider = "ollama"
+    result = {"providers": [], "default_provider": default_provider, "default_model": settings.ollama_model}
+    for engine in LOCAL_ENGINES:
+        label = ENGINE_LABELS[engine]
+        try:
+            models = await engine_models(engine)
+            result["providers"].append({"id": engine, "label": label, "available": True, "models": [{"id": m, "label": m} for m in models]})
+        except Exception as exc:
+            result["providers"].append({"id": engine, "label": label, "available": False, "error": str(exc)[:180], "models": []})
     saved = _user_keys() if owner_id is None else _keys_for(owner_id)
-    labels = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
     for pid in FALLBACK_ORDER:
         has = pid in saved
-        result["providers"].append({"id": pid, "label": labels[pid], "available": has, "error": None if has else "Add your own key in Settings to enable", "models": []})
-    result["providers"].append({"id":"auto","label":"Automatic fallback","available":True,"models":[{"id":"","label":"Use configured defaults"}]})
+        result["providers"].append({"id": pid, "label": _USER_LABELS[pid], "available": has, "error": None if has else "Add your own key in Settings to enable", "models": []})
+    result["providers"].append({"id": "auto", "label": "Automatic fallback", "available": True, "models": [{"id": "", "label": "Use configured defaults"}]})
     return result
 
-async def _primary_chain(messages, model):
-    chain: list[str] = []
-    preferred = model or settings.primary_model
-    try:
-        available = await primary_models()
-    except Exception:
-        available = []
-    if preferred and (not available or preferred in available): chain.append(preferred)
-    chain += [m for m in available if m not in chain][:4]
-    chain_errors: list[str] = []
-    for candidate in chain:
+
+async def _local_chain(messages, model):
+    errors: list[str] = []
+    for engine in LOCAL_ENGINES:
         try:
-            return await primary_chat(messages, candidate), "primary", candidate
+            models = await engine_models(engine)
         except Exception as exc:
-            chain_errors.append(f"{candidate}: {exc}")
-            text = str(exc)
-            if 'HTTP 429' not in text and 'HTTP 50' not in text: break
-    detail = f" ({'; '.join(chain_errors)})" if chain_errors else ""
-    raise ProviderError(f"Phoenix AI failed{detail}")
+            errors.append(f"{ENGINE_LABELS[engine]}: {exc}")
+            continue
+        chosen = model if model in models else None
+        try:
+            text = await engine_chat(engine, messages, chosen)
+            return text, engine, chosen or _engine_config(engine)[2]
+        except Exception as exc:
+            errors.append(f"{ENGINE_LABELS[engine]}: {exc}")
+    return None, errors, None
+
 
 async def chat(messages, provider="auto", model=None):
     provider = (provider or "auto").lower()
     if provider == "primary":
-        selected = await _validated_primary_model(model); return await primary_chat(messages, selected), "primary", selected
+        # Legacy value from stored tasks/clients: the old Phoenix router is no longer a provider.
+        provider = "auto"
+    if provider in LOCAL_ENGINES:
+        return await engine_chat(provider, messages, model), provider, model or _engine_config(provider)[2]
     if provider in _USER_CHAT:
         key = _user_keys().get(provider)
         if not key: raise ProviderError(f"{provider} key is not saved. Add it in Settings to use {provider}.")
         return await _USER_CHAT[provider](messages, model, key), provider, model or ""
-    if provider != "auto": raise ProviderError("Unsupported provider. Choose primary, gemini, openai, anthropic, or auto.")
-    # Auto: Phoenix AI only (model chain, then retries), then user-saved providers in order.
-    try:
-        return await _primary_chain(messages, model)
-    except Exception as primary_error:
-        saved = _user_keys()
-        fallback_errors: list[str] = []
-        for pid in FALLBACK_ORDER:
-            if pid not in saved: continue
-            try:
-                return await _USER_CHAT[pid](messages, None, saved[pid]), pid, ""
-            except Exception as exc:
-                fallback_errors.append(f"{pid}: {exc}")
-        if not fallback_errors:
-            raise ProviderError(f"{primary_error}") from primary_error
-        raise ProviderError(f"Phoenix AI failed: {primary_error}; saved providers failed: {'; '.join(fallback_errors)}") from primary_error
+    if provider != "auto":
+        raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, or auto.")
+    text, engine_or_errors, used_model = await _local_chain(messages, model)
+    if text is not None:
+        return text, engine_or_errors, used_model
+    local_errors = engine_or_errors
+    saved = _user_keys()
+    fallback_errors: list[str] = []
+    for pid in FALLBACK_ORDER:
+        if pid not in saved: continue
+        try:
+            return await _USER_CHAT[pid](messages, None, saved[pid]), pid, ""
+        except Exception as exc:
+            fallback_errors.append(f"{pid}: {exc}")
+    local_text = "; ".join(local_errors) if local_errors else "no local engine is configured"
+    if not fallback_errors:
+        raise ProviderError(f"No local model engine answered ({local_text}). Set OLLAMA_BASE_URL, LLAMACPP_BASE_URL or SMOLLM2_BASE_URL, or save your own provider key in Settings.")
+    raise ProviderError(f"No local model engine answered ({local_text}); saved keys failed: {'; '.join(fallback_errors)}")

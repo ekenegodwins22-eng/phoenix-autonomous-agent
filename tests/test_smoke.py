@@ -187,22 +187,22 @@ def test_phoenix_chat_response_parser_handles_custom_router_shapes():
 
 def test_phoenix_headers_use_x_api_key(monkeypatch):
     from app import config
-    from app.providers import _primary_headers
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    from app.providers import _engine_headers
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
-    headers = _primary_headers()
+    headers = _engine_headers('ollama')
     assert headers['X-API-Key'] == 'test-secret'
     assert 'Authorization' not in headers
 
 
-def test_phoenix_model_discovery_requires_key(monkeypatch):
+def test_phoenix_model_discovery_requires_base_url(monkeypatch):
     import asyncio
     import pytest
     from app import config
-    from app.providers import ProviderError, primary_models
-    monkeypatch.setattr(config.settings, 'primary_api_key', '')
-    with pytest.raises(ProviderError, match='PRIMARY_API_KEY'):
-        asyncio.run(primary_models())
+    from app.providers import ProviderError, engine_models
+    monkeypatch.setattr(config.settings, 'ollama_base_url', '')
+    with pytest.raises(ProviderError, match='Ollama base URL'):
+        asyncio.run(engine_models('ollama'))
 
 
 def test_mailbox_identifiers_reject_path_traversal():
@@ -405,27 +405,27 @@ def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     seen = []
     def handler(request):
         seen.append((request.method, request.url.path, request.headers.get('x-api-key'), request.content))
-        if request.url.path == '/models':
-            return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
-        if request.url.path == '/chat':
-            return httpx.Response(200, json={'response': 'complete'})
-        if request.url.path == '/chat/stream':
-            return httpx.Response(200, content=b'data: {"token":"streamed"}\ndata: [DONE]\n', headers={'content-type': 'text/event-stream'})
+        if request.url.path == '/v1/models':
+            return httpx.Response(200, json={'data': [{'id': 'live-model'}]})
+        if request.url.path == '/v1/chat/completions' and b'"stream": true' not in request.content and b'"stream":true' not in request.content:
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'complete'}}]})
+        if request.url.path == '/v1/chat/completions':
+            return httpx.Response(200, content=b'data: {"choices": [{"delta": {"content": "streamed"}}]}\n\ndata: [DONE]\n', headers={'content-type': 'text/event-stream'})
         return httpx.Response(404)
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'https://router.test/v1')
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
 
     async def run():
         messages = [{'role': 'user', 'content': 'hello'}]
-        assert await providers.primary_chat(messages, 'live-model') == 'complete'
-        pieces = [piece async for piece in providers.primary_chat_stream(messages, 'live-model')]
+        assert await providers.engine_chat('ollama', messages, 'live-model') == 'complete'
+        pieces = [piece async for piece in providers.engine_chat_stream('ollama', messages, 'live-model')]
         assert pieces == ['streamed']
     asyncio.run(run())
-    assert [path for _, path, _, _ in seen] == ['/models', '/chat', '/models', '/chat/stream']
+    assert [path for _, path, _, _ in seen] == ['/v1/models', '/v1/chat/completions', '/v1/models', '/v1/chat/completions']
     assert all(key == 'test-secret' for _, _, key, _ in seen)
 
 
@@ -435,22 +435,22 @@ def test_phoenix_chat_retries_transient_502_with_bounded_backoff(monkeypatch):
     from app import config, providers
     calls = {'chat': 0}
     def handler(request):
-        if request.url.path == '/models':
+        if request.url.path == '/v1/models':
             return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
-        if request.url.path == '/chat':
+        if request.url.path == '/v1/chat/completions':
             calls['chat'] += 1
             if calls['chat'] < 3:
                 return httpx.Response(502, json={'detail': 'upstream unavailable'})
-            return httpx.Response(200, json={'response': 'recovered'})
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'recovered'}}]})
         return httpx.Response(404)
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'https://router.test/v1')
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 3)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_base_seconds', 0)
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
-    assert asyncio.run(providers.primary_chat([{'role':'user','content':'hello'}], 'live-model')) == 'recovered'
+    assert asyncio.run(providers.engine_chat('ollama', [{'role':'user','content':'hello'}], 'live-model')) == 'recovered'
     assert calls['chat'] == 3
 
 
@@ -460,17 +460,17 @@ def test_phoenix_chat_does_not_retry_authentication_errors(monkeypatch):
     from app import config, providers
     calls = {'chat': 0}
     def handler(request):
-        if request.url.path == '/models':
+        if request.url.path == '/v1/models':
             return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
         calls['chat'] += 1
         return httpx.Response(401, json={'detail': 'Not authenticated'})
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'https://router.test/v1')
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
     try:
-        asyncio.run(providers.primary_chat([{'role':'user','content':'hello'}], 'live-model'))
+        asyncio.run(providers.engine_chat('ollama', [{'role':'user','content':'hello'}], 'live-model'))
     except providers.ProviderError:
         pass
     else:

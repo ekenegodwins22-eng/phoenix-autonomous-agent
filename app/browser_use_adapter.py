@@ -79,7 +79,7 @@ class PhoenixRouterChatModel:
     proxy configuration all stay in app.providers / app.config.
     """
 
-    def __init__(self, provider: str = 'primary', model: str | None = None):
+    def __init__(self, provider: str = 'auto', model: str | None = None):
         self.provider_choice = provider
         self.model = model or settings.primary_model
         self._verified_api_keys = True
@@ -126,7 +126,7 @@ def latest_frame(task_id: str) -> bytes | None:
     return _latest_frames.get(task_id)
 
 
-def _browser_profile_kwargs(proxy_mode: str = 'direct', browser_target: str | None = None) -> dict:
+def _browser_profile_kwargs(proxy_mode: str = 'direct', browser_target: str | None = None, run_proxy: dict | None = None) -> dict:
     """Map owner browser settings (console Browser tab) onto browser-use's BrowserProfile."""
     from app import run_options as run_opts
     bopts = run_opts.current().get('browser') or {}
@@ -139,8 +139,10 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct', browser_target: str | No
         kwargs['viewport'] = {'width': int(bopts['viewport_width']), 'height': int(bopts['viewport_height'])}
     if bopts.get('user_agent'):
         kwargs['user_agent'] = str(bopts['user_agent'])
-    proxy = configured_proxy() if proxy_mode == 'configured' else None
-    if proxy:
+    proxy = run_proxy or (configured_proxy() if proxy_mode == 'configured' else None)
+    if proxy and browser_target != 'remote':
+        # Local launches honor the proxy (per-task proxy_id or configured). Remote CDP attach
+        # cannot pass a proxy: the proxy is set on the remote Chrome, so it is ignored here.
         from browser_use.browser.profile import ProxySettings
         kwargs['proxy'] = ProxySettings(server=proxy['server'], username=proxy.get('username'), password=proxy.get('password'))
     # Remote browserless Chrome: attach over CDP instead of launching a local chromium.
@@ -275,13 +277,14 @@ def _save_downloads(task_id: str | None, paths: list[str]) -> list[str]:
 async def execute_browser_use_task(
     instruction: str,
     start_url: str | None = None,
-    provider: str = 'primary',
+    provider: str = 'auto',
     model: str | None = None,
     progress=None,
     cancel_event=None,
     proxy_mode: str = 'direct',
     task_id: str | None = None,
     browser_target: str | None = None,
+    run_proxy: dict | None = None,
 ):
     """Run the vendored browser-use Agent inside Phoenix's task wrapper."""
     if not browser_use_available():
@@ -291,7 +294,8 @@ async def execute_browser_use_task(
     from app import run_options as run_opts
 
     opts = run_opts.current()
-    session = BrowserSession(browser_profile=BrowserProfile(**_browser_profile_kwargs(proxy_mode, browser_target)))
+    profile_kwargs = _browser_profile_kwargs(proxy_mode, browser_target, run_proxy) if run_proxy else _browser_profile_kwargs(proxy_mode, browser_target)
+    session = BrowserSession(browser_profile=BrowserProfile(**profile_kwargs))
     task = instruction if not start_url else f'{instruction}\nStart at this URL: {start_url}'
     llm = PhoenixRouterChatModel(provider=provider, model=model)
     system_extension = phoenix_agent_instructions()

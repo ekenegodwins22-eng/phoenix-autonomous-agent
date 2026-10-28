@@ -7,18 +7,18 @@ def test_provider_502_identifies_selected_model(monkeypatch):
     from app import config, providers
 
     def handler(request):
-        if request.url.path == '/models':
-            return httpx.Response(200, json={'models': [{'id': 'bad-model'}]})
+        if request.url.path == '/v1/models':
+            return httpx.Response(200, json={'data': [{'id': 'bad-model'}]})
         return httpx.Response(502, text='error code: 502')
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://router.test')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'https://router.test/v1')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
     try:
-        asyncio.run(providers.primary_chat([{'role': 'user', 'content': 'hello'}], 'bad-model'))
+        asyncio.run(providers.engine_chat('ollama', [{'role': 'user', 'content': 'hello'}], 'bad-model'))
     except providers.ProviderError as exc:
         assert 'HTTP 502' in str(exc)
         assert 'bad-model' in str(exc)
@@ -35,15 +35,15 @@ def test_model_discovery_retries_a_transient_timeout(monkeypatch):
         calls['count'] += 1
         if calls['count'] == 1:
             raise httpx.ReadTimeout('temporary catalog timeout')
-        return httpx.Response(200, json={'models': [{'id': 'recovered-model'}]})
+        return httpx.Response(200, json={'data': [{'id': 'recovered-model'}]})
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'https://retry-router.test')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'https://retry-router.test/v1')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_model_discovery_retry_base_seconds', 0)
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
-    assert asyncio.run(providers.primary_models()) == ['recovered-model']
+    assert asyncio.run(providers.engine_models('ollama')) == ['recovered-model']
     assert calls['count'] == 2
 
 
@@ -92,12 +92,12 @@ def test_model_discovery_404_falls_back_to_primary_model_only(monkeypatch):
         return httpx.Response(404, text='not found')
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
-    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'ollama_model', 'qwen2.5:0.5b')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
-    assert asyncio.run(providers.primary_models()) == ['qwen2.5:0.5b']
+    assert asyncio.run(providers.engine_models('ollama')) == ['qwen2.5:0.5b']
 
 
 def test_auto_chat_never_uses_gemini_without_a_saved_key(monkeypatch):
@@ -110,9 +110,9 @@ def test_auto_chat_never_uses_gemini_without_a_saved_key(monkeypatch):
         return httpx.Response(500, text='boom')
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
-    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'ollama_model', 'qwen2.5:0.5b')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
     monkeypatch.setattr(config.settings, 'gemini_api_key', '')
@@ -138,9 +138,9 @@ def test_auto_chat_uses_user_saved_key_after_primary_fails(monkeypatch):
         return httpx.Response(404)
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
-    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
-    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'ollama_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'ollama_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'ollama_model', 'qwen2.5:0.5b')
     monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
     monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
     monkeypatch.setattr(providers, '_user_keys', lambda: {'openai': 'sk-user'})
