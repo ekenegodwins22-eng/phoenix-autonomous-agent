@@ -292,6 +292,14 @@ def request_cancel(task_id: str) -> bool:
         return cur.rowcount == 1
 
 
+def set_model_choice(task_id: str, provider: str, model: str | None) -> dict | None:
+    """Persist the model the user picked for this task; the running agent re-reads it each step."""
+    with _connect() as conn:
+        conn.execute('UPDATE tasks SET provider=?, model=?, updated_at=? WHERE id=?', (provider or 'auto', model or None, _now(), task_id))
+        conn.commit()
+    return get_task(task_id)
+
+
 def requeue_for_message(task_id: str) -> dict | None:
     """Reopen a terminal task when its owner sends a follow-up instruction."""
     with _connect() as conn:

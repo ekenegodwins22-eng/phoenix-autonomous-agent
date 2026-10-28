@@ -6,7 +6,7 @@ Three local engines, all OpenAI-compatible (GET /v1/models, POST /v1/chat/comple
   smollm2   -> SMOLLM2_BASE_URL
 
 Auto chain: ollama -> llama.cpp -> smollm2. An engine that fails discovery is skipped.
-Then user-saved keys (gemini, openai, anthropic) act as optional fallbacks. Gemini is never
+Then user-saved keys (gemini, openai, anthropic) and finally agentrouter act as optional fallbacks. Gemini is never
 used unless the owner saved a key for it.
 """
 from collections.abc import AsyncIterator
@@ -129,8 +129,39 @@ async def engine_models(engine: str) -> list[str]:
     raise last_error or ProviderError(f"{label} model discovery failed")
 
 
+_CHAT_ROLES = ("system", "user", "assistant")
+
+
 def _prompt_messages(messages) -> list[dict]:
-    return [{"role": str(m.get("role", "user")), "content": str(m.get("content", ""))} for m in messages]
+    """Chat payload llama.cpp/ollama accept: standard roles only, no empty turns."""
+    out = []
+    for m in messages or []:
+        content = str(m.get("content", "") if isinstance(m, dict) else "")
+        if not content.strip():
+            continue
+        role = str(m.get("role", "user")) if isinstance(m, dict) else "user"
+        out.append({"role": role if role in _CHAT_ROLES else "user", "content": content})
+    if not out:
+        raise ProviderError("chat request has no message content to send")
+    return out
+
+
+def _is_context_overflow(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    text = response.text.lower()
+    return "exceed" in text and "context" in text
+
+
+def _shrink_messages(messages: list[dict]) -> list[dict]:
+    """Halve the longest message so a context-overflow 400 can be retried once more."""
+    shrunk = [dict(m) for m in messages]
+    longest = max(range(len(shrunk)), key=lambda i: len(shrunk[i]["content"]))
+    content = shrunk[longest]["content"]
+    keep = max(len(content) // 2, 500)
+    if len(content) > keep:
+        shrunk[longest]["content"] = content[:keep] + "\n[truncated to fit the model context]"
+    return shrunk
 
 
 def _extract_chat_text(data) -> str:
@@ -192,6 +223,13 @@ async def engine_chat(engine: str, messages, model: str | None = None) -> str:
             if delay is None: delay = min(settings.primary_chat_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
             log.warning("%s chat returned HTTP %s; retrying in %.2fs (%d/%d)", label, response.status_code, delay, attempt + 1, attempts - 1)
             await asyncio.sleep(delay)
+        for _ in range(2):
+            if not _is_context_overflow(response):
+                break
+            # Small-context local models (e.g. SmolLM2 n_ctx 2048) reject oversized snapshots with 400.
+            payload["messages"] = _shrink_messages(payload["messages"])
+            async with httpx.AsyncClient(timeout=settings.primary_timeout_seconds) as client:
+                response = await client.post(_engine_url(engine, "chat/completions"), headers=_engine_headers(engine), json=payload)
         _raise_upstream(response, "/v1/chat/completions", chosen_model, label=label)
         return _extract_chat_text(response.json())
     except ProviderError: raise
@@ -243,11 +281,15 @@ def _keys_for(owner: int) -> dict:
         log.warning("could not read saved provider keys: %s", type(exc).__name__)
         return {}
 
+def _env_key(pid: str) -> str:
+    """Operator-level key from env, used only for agentrouter (the other providers are owner-saved)."""
+    return settings.agentrouter_api_key if pid == "agentrouter" else ""
+
 def _user_keys() -> dict:
     owner = _owner_ctx.get()
     return _keys_for(owner) if owner is not None else {}
 
-FALLBACK_ORDER = ("gemini", "openai", "anthropic")
+FALLBACK_ORDER = ("gemini", "openai", "anthropic", "agentrouter")  # agentrouter last
 
 async def gemini_chat(messages, model=None, api_key=None):
     key = api_key or settings.gemini_api_key
@@ -291,8 +333,26 @@ async def anthropic_chat(messages, model=None, api_key=None):
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Anthropic response did not contain generated text: {type(exc).__name__}") from exc
 
-_USER_CHAT = {"gemini": gemini_chat, "openai": openai_chat, "anthropic": anthropic_chat}
-_USER_LABELS = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
+AGENTROUTER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) CherryStudio/1.0.0 Chrome/124.0.0.0 Safari/537.36"
+
+async def agentrouter_chat(messages, model=None, api_key=None):
+    """OpenAI-compatible AgentRouter. Its edge gates unknown clients, so send a browser-like UA."""
+    key = api_key or settings.agentrouter_api_key
+    if not key: raise ProviderError("AgentRouter key is not saved. Add it in Settings to use AgentRouter.")
+    base = _normalize_base(settings.agentrouter_base_url) or "https://agentrouter.org/v1"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": AGENTROUTER_USER_AGENT}
+    payload = {"model": model or settings.agentrouter_model, "messages": _prompt_messages(messages), "stream": False}
+    try:
+        async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
+            response = await client.post(f"{base}/chat/completions", headers=headers, json=payload)
+        _raise_upstream(response, "request", label="AgentRouter")
+        return _extract_chat_text(response.json())
+    except ProviderError: raise
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"AgentRouter response did not contain generated text: {type(exc).__name__}") from exc
+
+_USER_CHAT = {"gemini": gemini_chat, "openai": openai_chat, "anthropic": anthropic_chat, "agentrouter": agentrouter_chat}
+_USER_LABELS = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic", "agentrouter": "AgentRouter"}
 
 
 async def available_models(owner_id: int | None = None):
@@ -315,18 +375,33 @@ async def available_models(owner_id: int | None = None):
 
 async def _local_chain(messages, model):
     errors: list[str] = []
-    for engine in LOCAL_ENGINES:
+    order = list(LOCAL_ENGINES)
+    pinned = None
+    if model:
+        # A picked model stays on the engine that serves it; other engines are only fallbacks.
+        for engine in LOCAL_ENGINES:
+            try:
+                if model in await engine_models(engine):
+                    pinned = engine
+                    break
+            except Exception:
+                continue
+        if pinned:
+            order = [pinned] + [e for e in order if e != pinned]
+    for engine in order:
         try:
             models = await engine_models(engine)
         except Exception as exc:
             errors.append(f"{ENGINE_LABELS[engine]}: {exc}")
             continue
         chosen = model if model in models else None
-        try:
-            text = await engine_chat(engine, messages, chosen)
-            return text, engine, chosen or _engine_config(engine)[2]
-        except Exception as exc:
-            errors.append(f"{ENGINE_LABELS[engine]}: {exc}")
+        # The pinned engine gets two attempts in a row before the chain falls through.
+        for _attempt in range(2 if engine == pinned else 1):
+            try:
+                text = await engine_chat(engine, messages, chosen)
+                return text, engine, chosen or _engine_config(engine)[2]
+            except Exception as exc:
+                errors.append(f"{ENGINE_LABELS[engine]}: {exc}")
     return None, errors, None
 
 
@@ -338,11 +413,11 @@ async def chat(messages, provider="auto", model=None):
     if provider in LOCAL_ENGINES:
         return await engine_chat(provider, messages, model), provider, model or _engine_config(provider)[2]
     if provider in _USER_CHAT:
-        key = _user_keys().get(provider)
+        key = _user_keys().get(provider) or _env_key(provider)
         if not key: raise ProviderError(f"{provider} key is not saved. Add it in Settings to use {provider}.")
         return await _USER_CHAT[provider](messages, model, key), provider, model or ""
     if provider != "auto":
-        raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, or auto.")
+        raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, agentrouter, or auto.")
     text, engine_or_errors, used_model = await _local_chain(messages, model)
     if text is not None:
         return text, engine_or_errors, used_model
@@ -350,9 +425,10 @@ async def chat(messages, provider="auto", model=None):
     saved = _user_keys()
     fallback_errors: list[str] = []
     for pid in FALLBACK_ORDER:
-        if pid not in saved: continue
+        key = saved.get(pid) or _env_key(pid)
+        if not key: continue
         try:
-            return await _USER_CHAT[pid](messages, None, saved[pid]), pid, ""
+            return await _USER_CHAT[pid](messages, None, key), pid, ""
         except Exception as exc:
             fallback_errors.append(f"{pid}: {exc}")
     local_text = "; ".join(local_errors) if local_errors else "no local engine is configured"

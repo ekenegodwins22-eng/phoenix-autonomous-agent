@@ -870,7 +870,8 @@ $('runFast').onchange=()=>{cfg.fast=$('runFast').checked;syncToggles()};
 $('runDeep').onchange=()=>{cfg.deep=$('runDeep').checked;syncToggles()};
 $('taskFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles();setToggle($('taskFast'),cfg.fast)};
 $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
-$('taskModel').onchange=()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task'};
+$('taskModel').onchange=async()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task';
+  const t=detail||{};if(t.id&&RUN.includes(t.status)){try{const pv=cfg.model.split('|');await api('/tasks/'+encodeURIComponent(t.id)+'/model',{method:'PUT',body:JSON.stringify({provider:pv[0]||'auto',model:pv[1]||null})});}catch(e){}}};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
 $('homeBrowser').onchange=()=>{cfg.browser=$('homeBrowser').value};
 $('homeProxy').onchange=()=>{cfg.proxy_id=$('homeProxy').value?Number($('homeProxy').value):null};
@@ -983,7 +984,7 @@ $('agentReset').onclick=async()=>{
 };
 
 let proxyList=[];
-const PROVIDER_KEY_LABELS={gemini:'Gemini',openai:'OpenAI',anthropic:'Anthropic'};
+const PROVIDER_KEY_LABELS={gemini:'Gemini',openai:'OpenAI',anthropic:'Anthropic',agentrouter:'AgentRouter'};
 async function loadProviderKeys(){
   const box=$('keysList');
   try{

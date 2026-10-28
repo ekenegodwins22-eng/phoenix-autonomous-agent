@@ -43,7 +43,7 @@ def save_settings(owner_id: int, data: dict) -> dict:
     return {**clean, 'updated_at': now}
 
 
-PROVIDER_KEY_NAMES = ('gemini', 'openai', 'anthropic')
+PROVIDER_KEY_NAMES = ('gemini', 'openai', 'anthropic', 'agentrouter')
 
 
 def _ensure_provider_keys():

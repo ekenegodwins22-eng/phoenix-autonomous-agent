@@ -1,5 +1,6 @@
 import json
 import secrets
+from typing import Literal
 import asyncio, logging
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.gzip import GZipMiddleware
@@ -248,6 +249,27 @@ async def create_task(request: TaskRequest, user=Depends(current_user)):
     return snapshot(item)
 
 
+def _task_choice(task_id: str, default_provider: str, default_model: str | None):
+    """Current provider/model for a task: the user's latest pick, else the task's stored choice."""
+    row = task_store.get_task(task_id) or {}
+    return (row.get('provider') or default_provider or 'auto'), (row.get('model') or default_model)
+
+
+class TaskModelRequest(BaseModel):
+    provider: Literal["auto", "ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"] = "auto"
+    model: str | None = Field(default=None, max_length=160)
+
+
+@app.put('/tasks/{task_ref}/model', response_model=TaskStatus)
+async def set_task_model(task_ref: str, body: TaskModelRequest, user=Depends(current_user)):
+    """Change the model for a task that is queued, running or paused; the next step uses it."""
+    item = _task_for_user(task_ref, user)
+    if item['status'] in {'completed', 'failed', 'cancelled'}:
+        raise HTTPException(status_code=409, detail='Task has finished; send a follow-up to re-run it with a model')
+    task_store.set_model_choice(item['id'], body.provider, body.model)
+    return snapshot(task_store.get_task(item['id'], owner_id=user['id']))
+
+
 async def start_task(task_id: str):
     if task_id in task_handles and not task_handles[task_id].done():
         return
@@ -350,7 +372,7 @@ async def run_task(task_id: str):
                 raise asyncio.CancelledError()
             # The global lock is held only while actively executing. It is released during a
             # human pause (clock.pause) so other tasks are not blocked by a waiting person.
-            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume, browser_target=request.browser_target, run_proxy=run_proxy))
+            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume, browser_target=request.browser_target, run_proxy=run_proxy, choice_source=lambda: _task_choice(task_id, request.provider, request.model)))
             result = await _run_with_active_budget(execution, clock)
         finally:
             clock.release()
@@ -722,7 +744,7 @@ async def put_provider_key(body: ProviderKeyBody, user=Depends(current_user)):
     """Save or clear (empty api_key) one optional fallback provider key for this owner."""
     provider = body.provider.lower().strip()
     if provider not in settings_store.PROVIDER_KEY_NAMES:
-        raise HTTPException(status_code=400, detail='Unsupported provider. Choose gemini, openai, or anthropic.')
+        raise HTTPException(status_code=400, detail='Unsupported provider. Choose gemini, openai, anthropic, or agentrouter.')
     if body.api_key.strip():
         settings_store.save_provider_key(user['id'], provider, body.api_key)
     else:

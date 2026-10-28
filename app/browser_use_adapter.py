@@ -80,10 +80,23 @@ class PhoenixRouterChatModel:
     proxy configuration all stay in app.providers / app.config.
     """
 
-    def __init__(self, provider: str = 'auto', model: str | None = None):
+    def __init__(self, provider: str = 'auto', model: str | None = None, choice_source=None):
         self.provider_choice = provider
         self.model = model or settings.primary_model
         self._verified_api_keys = True
+        # Optional callable returning the task's current (provider, model) so a model picked
+        # on a paused task takes effect on continue instead of the original run's choice.
+        self._choice_source = choice_source
+
+    def _current_choice(self):
+        if self._choice_source is not None:
+            try:
+                provider, model = self._choice_source()
+                if provider:
+                    self.provider_choice, self.model = provider, (model or None)
+            except Exception:
+                pass
+        return self.provider_choice, self.model
 
     @property
     def provider(self) -> str:
@@ -102,14 +115,16 @@ class PhoenixRouterChatModel:
         payload = [{'role': _message_role(item), 'content': _message_text(item)} for item in messages]
         if output_format is None:
             # app.providers.chat returns (text, provider_used, model_used).
-            text, _used_provider, _used_model = await chat(payload, self.provider_choice, self.model)
+            provider_choice, model = self._current_choice()
+            text, _used_provider, _used_model = await chat(payload, provider_choice, model)
             return ChatInvokeCompletion(completion=text, usage=None)
         # Small local models often return empty or fenced/non-JSON output on large pages.
         # Retry the same step with a shorter snapshot and an explicit JSON-only nudge.
         last_error: Exception | None = None
         for attempt in range(MAX_ACTION_ATTEMPTS):
             attempt_payload = payload if attempt == 0 else _retry_payload(payload)
-            text, _used_provider, _used_model = await chat(attempt_payload, self.provider_choice, self.model)
+            provider_choice, model = self._current_choice()
+            text, _used_provider, _used_model = await chat(attempt_payload, provider_choice, model)
             try:
                 completion = _parse_action_output(output_format, text)
                 return ChatInvokeCompletion(completion=completion, usage=None)
@@ -328,6 +343,7 @@ async def execute_browser_use_task(
     task_id: str | None = None,
     browser_target: str | None = None,
     run_proxy: dict | None = None,
+    choice_source=None,
 ):
     """Run the vendored browser-use Agent inside Phoenix's task wrapper."""
     if not browser_use_available():
@@ -340,7 +356,7 @@ async def execute_browser_use_task(
     profile_kwargs = _browser_profile_kwargs(proxy_mode, browser_target, run_proxy) if run_proxy else _browser_profile_kwargs(proxy_mode, browser_target)
     session = BrowserSession(browser_profile=BrowserProfile(**profile_kwargs))
     task = instruction if not start_url else f'{instruction}\nStart at this URL: {start_url}'
-    llm = PhoenixRouterChatModel(provider=provider, model=model)
+    llm = PhoenixRouterChatModel(provider=provider, model=model, choice_source=choice_source)
     system_extension = phoenix_agent_instructions()
     owner_prompt = (opts.get('system_prompt') or '').strip()
     if owner_prompt:
