@@ -173,12 +173,24 @@ label.lab:first-child{margin-top:0}
 @media(max-width:700px){.hero{width:100%;margin:0;border-radius:0;border-left:0;border-right:0}.hero-state{display:none}}
 .hint{color:var(--copy-3);font-size:12px;margin-top:8px}
 /* auth */
-.auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50}
-.auth form{width:min(380px,calc(100% - 32px));background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px}
-.auth h1{margin:0 0 4px;font-size:24px;font-weight:500;letter-spacing:-.02em}
-.auth p{color:var(--copy-2);margin:0 0 14px}
-.auth .btn{width:100%;margin-top:14px}
-.auth .field{margin-bottom:2px}
+.auth{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50;padding:16px;background-image:radial-gradient(600px 300px at 50% -10%,rgba(254,117,14,.14),transparent)}
+.auth form{width:min(400px,100%);background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:32px 28px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.auth form:before{content:"";display:block;width:44px;height:44px;margin:0 auto 18px;border-radius:14px;border:1px solid var(--line-2);background:rgba(254,117,14,.08) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='none' stroke='%23fe750e' stroke-width='3.2' stroke-linecap='round'%3E%3Cpath d='M24 6a18 18 0 1 1-18 18'/%3E%3Cpath d='M24 14a10 10 0 1 1-10 10'/%3E%3Ccircle cx='24' cy='24' r='3' fill='%23fe750e' stroke='none'/%3E%3C/svg%3E") center/24px no-repeat}
+.auth h1{margin:0 0 6px;font-size:24px;font-weight:600;letter-spacing:-.02em;text-align:center}
+.auth p{color:var(--copy-2);margin:0 0 20px;font-size:14px;text-align:center}
+.auth label.lab{font-size:13px;color:var(--copy-2);margin:14px 0 6px}
+.auth .field{height:44px;margin-bottom:2px;padding:0 14px;border-radius:12px;background:var(--bg);font-size:15px;transition:border-color .15s,box-shadow .15s}
+.auth .field:focus{border-color:var(--pumpkin);box-shadow:0 0 0 3px rgba(254,117,14,.18)}
+.auth .err{min-height:18px;margin-top:10px;font-size:13px;color:var(--bad);text-align:center}
+.auth .btn{width:100%;height:44px;margin-top:12px;font-size:15px;font-weight:500}
+.auth #authBtn{background:var(--copy);border-color:var(--copy);color:#0a0a0a}
+.auth #authBtn:hover{background:#fff}
+.auth #authSwitch{border:0;height:36px;margin-top:6px;color:var(--copy-2);background:transparent}
+.auth #authSwitch:hover{color:var(--copy);background:transparent}
+.auth #authBtn:disabled{opacity:.6}
+.auth #authBtn:focus-visible,.auth #authSwitch:focus-visible{outline:2px solid var(--pumpkin);outline-offset:2px}
+.auth a.backhome{display:block;text-align:center;margin-top:18px;font-size:13px;color:var(--copy-3)}
+.auth a.backhome:hover{color:var(--copy-2)}
 @media(max-width:700px){.balance span.lbl{display:none}.bubble{max-width:92%}.filecard{max-width:92%}.hero{margin-bottom:32px}.kv{grid-template-columns:110px 1fr}.log{grid-template-columns:1fr}}
 </style>
 </head>
@@ -986,6 +998,7 @@ function startApp(){
   route();
 }
 
+if(location.hash==='#signup'&&authMode!=='register'){$('authSwitch').onclick()}
 if(token){startApp()}else{showAuth()}
 })();
 </script>
