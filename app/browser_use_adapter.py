@@ -143,6 +143,12 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
     if proxy:
         from browser_use.browser.profile import ProxySettings
         kwargs['proxy'] = ProxySettings(server=proxy['server'], username=proxy.get('username'), password=proxy.get('password'))
+    # Remote browserless Chrome: attach over CDP instead of launching a local chromium.
+    # Unset BROWSER_WS keeps the existing local-launch behavior unchanged.
+    import os
+    browser_ws = (os.environ.get('BROWSER_WS') or '').strip()
+    if browser_ws:
+        kwargs['cdp_url'] = browser_ws
     return kwargs
 
 

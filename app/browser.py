@@ -35,7 +35,13 @@ class SingleBrowser:
                     "--disable-background-timer-throttling", "--disable-renderer-backgrounding"]}
                 if proxy:
                     launch_options['proxy'] = {key: value for key, value in proxy.items() if key in {'server', 'username', 'password'} and value}
-                browser = await pw.chromium.launch(**launch_options)
+                import os
+                browser_ws = (os.environ.get('BROWSER_WS') or '').strip()
+                if browser_ws:
+                    # Remote browserless Chrome over CDP; unset BROWSER_WS keeps local launch.
+                    browser = await pw.chromium.connect_over_cdp(browser_ws, timeout=settings.browser_navigation_timeout_ms)
+                else:
+                    browser = await pw.chromium.launch(**launch_options)
                 context_options = {"viewport": {"width": int(bopts.get('viewport_width') or 1280), "height": int(bopts.get('viewport_height') or 800)}, "accept_downloads": True}
                 if bopts.get('user_agent'):
                     context_options['user_agent'] = str(bopts['user_agent'])
