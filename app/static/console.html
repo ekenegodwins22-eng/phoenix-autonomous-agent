@@ -239,6 +239,7 @@ label.lab:first-child{margin-top:0}
     <div class="side-head">
       <div class="row"><button class="btn primary" id="newTaskBtn" type="button" style="flex:1">New task</button></div>
       <div class="row">
+        <button class="btn small" id="navSettings" type="button">Settings</button>
         <button class="btn small" id="refreshBtn" type="button">Refresh</button>
         <button class="btn small danger" id="logoutBtn" type="button">Sign out</button>
       </div>
@@ -393,6 +394,8 @@ label.lab:first-child{margin-top:0}
       <div class="tabs" role="tablist">
         <button class="tab on" type="button" role="tab" data-tab="run" aria-selected="true">Run</button>
         <button class="tab" type="button" role="tab" data-tab="agent" aria-selected="false">Agent</button>
+        <button class="tab" type="button" role="tab" data-tab="keys" aria-selected="false">Keys</button>
+        <button class="tab" type="button" role="tab" data-tab="proxies" aria-selected="false">Proxies</button>
         <button class="tab" type="button" role="tab" data-tab="browser" aria-selected="false">Browser</button>
         <button class="tab" type="button" role="tab" data-tab="config" aria-selected="false">Config</button>
       </div>
@@ -469,24 +472,34 @@ label.lab:first-child{margin-top:0}
             <button class="btn small" id="browserReset" type="button">Reset</button>
             <span id="browserMsg" class="hint" style="margin:0"></span>
           </div>
-          <div class="sect" id="proxySect">
-            <h4>Proxies</h4>
-            <div class="hint" style="margin:0 0 10px">Local browser runs use the proxy you pick per task. Passwords are never shown after saving.</div>
-            <div id="proxyList" class="hint" style="margin:0 0 10px">No proxies yet.</div>
-            <label class="lab" for="pxLabel">Label</label>
-            <input class="field" id="pxLabel" placeholder="my proxy" maxlength="120">
-            <label class="lab" for="pxServer">Server</label>
-            <input class="field" id="pxServer" placeholder="http://host:port or socks5://host:port">
-            <label class="lab" for="pxUser">Username (optional)</label>
-            <input class="field" id="pxUser" autocomplete="off">
-            <label class="lab" for="pxPass">Password (optional)</label>
-            <input class="field" id="pxPass" type="password" autocomplete="new-password">
-            <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-              <button class="btn small primary" id="pxAdd" type="button">Add proxy</button>
-              <button class="btn small" id="pxScrape" type="button">Fetch 25 free proxies</button>
-            </div>
-            <div class="hint" id="pxMsg" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="tabpane" data-pane="keys">
+        <div class="sect">
+          <h4>Provider keys</h4>
+          <div class="hint" style="margin:0 0 10px">Optional fallback keys. Saved keys are never shown again; a saved badge means the key is stored for your account.</div>
+          <div id="keysList"></div>
+          <div class="hint" id="keysMsg" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="tabpane" data-pane="proxies">
+        <div class="sect" id="proxySect">
+          <h4>Proxies</h4>
+          <div class="hint" style="margin:0 0 10px">Local browser runs use the proxy you pick per task. Passwords are never shown after saving.</div>
+          <div id="proxyList" class="hint" style="margin:0 0 10px">No proxies yet.</div>
+          <label class="lab" for="pxLabel">Label</label>
+          <input class="field" id="pxLabel" placeholder="my proxy" maxlength="120">
+          <label class="lab" for="pxServer">Server</label>
+          <input class="field" id="pxServer" placeholder="http://host:port or socks5://host:port">
+          <label class="lab" for="pxUser">Username (optional)</label>
+          <input class="field" id="pxUser" autocomplete="off">
+          <label class="lab" for="pxPass">Password (optional)</label>
+          <input class="field" id="pxPass" type="password" autocomplete="new-password">
+          <div class="row" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <button class="btn small primary" id="pxAdd" type="button">Add proxy</button>
+            <button class="btn small" id="pxScrape" type="button">Fetch 25 free proxies</button>
           </div>
+          <div class="hint" id="pxMsg" style="margin-top:10px"></div>
         </div>
       </div>
       <div class="tabpane" data-pane="config">
@@ -618,12 +631,15 @@ document.querySelectorAll('.tab[data-tab]').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab[data-tab]').forEach(x=>{const on=x===t;x.classList.toggle('on',on);x.setAttribute('aria-selected',String(on))});
   document.querySelectorAll('.tabpane').forEach(pn=>pn.classList.toggle('on',pn.dataset.pane===t.dataset.tab));
   if(t.dataset.tab==='agent')loadAgentSettings();
-  if(t.dataset.tab==='browser'){loadBrowserSettings();loadProxies()}
+  if(t.dataset.tab==='browser'){loadBrowserSettings()}
+  if(t.dataset.tab==='proxies'){loadProxies()}
+  if(t.dataset.tab==='keys'){loadProviderKeys()}
 });
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{closePanels();$('scrim').classList.remove('open')});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){setSide(false);closePanels();$('scrim').classList.remove('open')}});
 $('filesBtn').onclick=()=>{openPanel('filesPanel');loadArtifacts()};
 $('keyBtn').onclick=()=>openPanel('settingsPanel');
+$('navSettings').onclick=()=>{setSide(false);openPanel('settingsPanel')};
 $('homeSettings').onclick=()=>openPanel('settingsPanel');
 $('taskSettings').onclick=()=>openPanel('settingsPanel');
 $('settingsLogout').onclick=()=>logout(false);
@@ -967,6 +983,34 @@ $('agentReset').onclick=async()=>{
 };
 
 let proxyList=[];
+const PROVIDER_KEY_LABELS={gemini:'Gemini',openai:'OpenAI',anthropic:'Anthropic'};
+async function loadProviderKeys(){
+  const box=$('keysList');
+  try{
+    const d=await api('/settings/provider-keys');
+    box.innerHTML='';
+    Object.keys(PROVIDER_KEY_LABELS).forEach(p=>{
+      const st=d[p]||{};
+      const wrap=document.createElement('div');wrap.style.cssText='margin:10px 0';
+      const head=document.createElement('label');head.className='lab';head.htmlFor='pk_'+p;head.innerHTML=esc(PROVIDER_KEY_LABELS[p])+' key '+(st.saved?'<span class="hint" style="margin:0;color:#7ee787">saved</span>':'<span class="hint" style="margin:0">not set</span>');
+      const row=document.createElement('div');row.style.cssText='display:flex;gap:8px;align-items:center';
+      const inp=document.createElement('input');inp.className='field';inp.id='pk_'+p;inp.type='password';inp.autocomplete='new-password';inp.placeholder=st.saved?'enter a new key to replace':'paste key';inp.maxLength=400;inp.style.flex='1';
+      const btn=document.createElement('button');btn.className='btn small primary';btn.type='button';btn.textContent='Save';
+      btn.onclick=()=>saveProviderKey(p,inp);
+      row.append(inp,btn);wrap.append(head,row);box.append(wrap);
+    });
+  }catch(e){$('keysMsg').textContent=e.message}
+}
+async function saveProviderKey(p,inp){
+  const key=inp.value.trim();
+  if(!key){$('keysMsg').textContent='Paste a key first.';return}
+  $('keysMsg').textContent='Saving '+PROVIDER_KEY_LABELS[p]+'…';
+  try{
+    await api('/settings/provider-keys',{method:'PUT',body:JSON.stringify({provider:p,api_key:key})});
+    inp.value='';$('keysMsg').textContent=PROVIDER_KEY_LABELS[p]+' key saved.';
+    await loadProviderKeys();
+  }catch(e){$('keysMsg').textContent=e.message}
+}
 function renderProxyDropdown(){
   const sel=$('homeProxy');const keep=sel.value;
   sel.innerHTML='<option value="">No proxy</option>'+proxyList.filter(p=>p.active).map(p=>`<option value="${p.id}">${p.label}</option>`).join('');

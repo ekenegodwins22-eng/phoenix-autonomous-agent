@@ -75,3 +75,12 @@ def test_console_task_view_has_framed_live_browser_hero():
         assert marker in html, marker
     # the hero polls the same endpoint as the screenshot pane
     assert "EP.shot" in html and "'/tasks/'+encodeURIComponent(ref)+EP.shot" in html
+
+
+def test_console_has_settings_nav_provider_keys_and_proxy_tabs():
+    html = (ROOT / 'app' / 'static' / 'console.html').read_text()
+    for marker in ('navSettings', 'data-tab="keys"', 'data-tab="proxies"', 'keysList', 'saveProviderKey',
+                   "'/settings/provider-keys'", "'/proxies/scrape'", "'/proxies/'+p.id"):
+        assert marker in html, marker
+    # passwords are masked by the API; the console never renders a clear password value
+    assert '${p.password}' not in html

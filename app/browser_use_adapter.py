@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -99,15 +100,57 @@ class PhoenixRouterChatModel:
     async def ainvoke(self, messages, output_format=None, **kwargs):
         from browser_use.llm.views import ChatInvokeCompletion
         payload = [{'role': _message_role(item), 'content': _message_text(item)} for item in messages]
-        # app.providers.chat returns (text, provider_used, model_used).
-        text, _used_provider, _used_model = await chat(payload, self.provider_choice, self.model)
-        completion: Any = text
-        if output_format is not None:
+        if output_format is None:
+            # app.providers.chat returns (text, provider_used, model_used).
+            text, _used_provider, _used_model = await chat(payload, self.provider_choice, self.model)
+            return ChatInvokeCompletion(completion=text, usage=None)
+        # Small local models often return empty or fenced/non-JSON output on large pages.
+        # Retry the same step with a shorter snapshot and an explicit JSON-only nudge.
+        last_error: Exception | None = None
+        for attempt in range(MAX_ACTION_ATTEMPTS):
+            attempt_payload = payload if attempt == 0 else _retry_payload(payload)
+            text, _used_provider, _used_model = await chat(attempt_payload, self.provider_choice, self.model)
             try:
-                completion = output_format.model_validate_json(text)
-            except Exception:
-                completion = output_format.model_validate(json.loads(text))
-        return ChatInvokeCompletion(completion=completion, usage=None)
+                completion = _parse_action_output(output_format, text)
+                return ChatInvokeCompletion(completion=completion, usage=None)
+            except Exception as exc:  # empty or unparseable model output
+                last_error = exc
+        raise last_error
+
+
+MAX_ACTION_ATTEMPTS = 3
+RETRY_SNAPSHOT_CHARS = 6000
+JSON_ONLY_NUDGE = 'Respond ONLY with the JSON action object. No prose, no markdown, no code fences.'
+
+
+def _strip_code_fences(text: str) -> str:
+    stripped = (text or '').strip()
+    if stripped.startswith('```'):
+        stripped = re.sub(r'^```[A-Za-z0-9_-]*\s*', '', stripped)
+        stripped = re.sub(r'\s*```$', '', stripped)
+    return stripped.strip()
+
+
+def _parse_action_output(output_format, text: str):
+    cleaned = _strip_code_fences(text)
+    if not cleaned:
+        raise ValueError('empty model response')
+    try:
+        return output_format.model_validate_json(cleaned)
+    except Exception:
+        return output_format.model_validate(json.loads(cleaned))
+
+
+def _retry_payload(payload: list[dict]) -> list[dict]:
+    """Copy of the chat payload with the longest message truncated and a JSON-only system nudge appended."""
+    shrunk = [dict(item) for item in payload]
+    if shrunk:
+        longest = max(range(len(shrunk)), key=lambda i: len(str(shrunk[i].get('content', ''))))
+        content = str(shrunk[longest].get('content', ''))
+        if len(content) > RETRY_SNAPSHOT_CHARS:
+            shrunk[longest]['content'] = content[:RETRY_SNAPSHOT_CHARS] + '\n[snapshot truncated for retry]'
+    shrunk.append({'role': 'system', 'content': JSON_ONLY_NUDGE})
+    return shrunk
 
 
 def phoenix_agent_instructions() -> str:

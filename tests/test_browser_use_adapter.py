@@ -104,3 +104,63 @@ def test_engine_does_not_use_browser_use_cloud(monkeypatch):
     from app import browser_use_adapter  # noqa: F401
     assert os.environ.get('ANONYMIZED_TELEMETRY') == 'false'
     assert os.environ.get('BROWSER_USE_CLOUD_SYNC') == 'false'
+
+
+def test_strip_code_fences_before_json_parse():
+    from app import browser_use_adapter as adapter
+
+    assert adapter._strip_code_fences('```json\n{"a": 1}\n```') == '{"a": 1}'
+    assert adapter._strip_code_fences('```\n{"a": 1}\n```') == '{"a": 1}'
+    assert adapter._strip_code_fences('{"a": 1}') == '{"a": 1}'
+
+
+def test_action_retry_recovers_from_empty_then_fenced_output(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import BaseModel
+    from app import browser_use_adapter
+
+    class Action(BaseModel):
+        name: str
+
+    responses = iter(['', '```json\n{"name": "click"}\n```'])
+    seen = []
+
+    async def fake_chat(messages, provider, model):
+        seen.append(messages)
+        return next(responses), 'primary', model
+
+    monkeypatch.setattr(browser_use_adapter, 'chat', fake_chat)
+    model = browser_use_adapter.PhoenixRouterChatModel(provider='primary', model='tiny')
+    completion = asyncio.run(model.ainvoke([SimpleNamespace(role='user', content='go')], Action))
+
+    assert completion.completion == Action(name='click')
+    assert len(seen) == 2
+    assert seen[1][-1] == {'role': 'system', 'content': browser_use_adapter.JSON_ONLY_NUDGE}
+
+
+def test_action_retry_gives_up_after_three_attempts_and_shortens_snapshot(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import BaseModel
+    from app import browser_use_adapter
+
+    class Action(BaseModel):
+        name: str
+
+    seen = []
+
+    async def fake_chat(messages, provider, model):
+        seen.append(messages)
+        return 'not json at all', 'primary', model
+
+    monkeypatch.setattr(browser_use_adapter, 'chat', fake_chat)
+    model = browser_use_adapter.PhoenixRouterChatModel(provider='primary', model='tiny')
+    big_page = 'x' * 20000
+    try:
+        asyncio.run(model.ainvoke([SimpleNamespace(role='user', content=big_page)], Action))
+        raise AssertionError('expected parse failure')
+    except ValueError:
+        pass
+    assert len(seen) == browser_use_adapter.MAX_ACTION_ATTEMPTS == 3
+    assert len(seen[0][0]['content']) == 20000
+    assert len(seen[1][0]['content']) < 6100
+    assert len(seen[2][0]['content']) < 6100
