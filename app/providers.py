@@ -1,5 +1,6 @@
-"""Provider clients for Phoenix AI Router and optional Google Gemini."""
+"""Provider clients: Phoenix AI Router (default) and opt-in user-key providers (Gemini, OpenAI, Anthropic)."""
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 import asyncio
 import json
 import logging
@@ -51,6 +52,11 @@ def _extract_model_ids(data) -> list[str]:
     return found
 
 async def primary_models() -> list[str]:
+    """List Phoenix AI models via the OpenAI-compatible GET {base}/models.
+
+    If the list call fails (404, timeout, empty list), fall back to just PRIMARY_MODEL
+    so chat still runs against the configured model.
+    """
     if not settings.primary_api_key:
         raise ProviderError("PRIMARY_API_KEY is not configured")
     global _model_cache
@@ -63,11 +69,11 @@ async def primary_models() -> list[str]:
     for attempt in range(attempts):
         try:
             async with httpx.AsyncClient(timeout=min(settings.primary_timeout_seconds, 20)) as client:
-                response = await client.get(_primary_url("available-models"), headers=_primary_headers())
-            _raise_upstream(response, "/available-models")
+                response = await client.get(_primary_url("models"), headers=_primary_headers())
+            _raise_upstream(response, "/models")
             models = _extract_model_ids(response.json())
             if not models:
-                raise ProviderError("Phoenix AI /available-models returned no recognizable model IDs")
+                raise ProviderError("Phoenix AI /models returned no recognizable model IDs")
             _model_cache = (cache_key, time.monotonic(), models)
             return models
         except ProviderError as exc:
@@ -77,11 +83,13 @@ async def primary_models() -> list[str]:
             last_error = ProviderError(f"Phoenix AI model discovery failed: {type(exc).__name__}")
             retryable = True
         if not retryable or attempt + 1 >= attempts:
-            raise last_error from last_error
+            break
         delay = min(settings.primary_model_discovery_retry_base_seconds * (2 ** attempt), settings.primary_chat_retry_max_seconds)
-        log.warning("Phoenix AI /available-models failed (%s); retrying in %.2fs (%d/%d)", last_error, delay, attempt + 1, attempts - 1)
+        log.warning("Phoenix AI /models failed (%s); retrying in %.2fs (%d/%d)", last_error, delay, attempt + 1, attempts - 1)
         await asyncio.sleep(delay)
-    raise last_error
+    fallback = (settings.primary_model or "").strip()
+    log.warning("Phoenix AI model list unavailable (%s); using PRIMARY_MODEL=%s only", last_error, fallback or "none")
+    return [fallback] if fallback else []
 
 def _extract_chat_text(data) -> str:
     if isinstance(data, str): return data
@@ -171,36 +179,86 @@ async def primary_chat_stream(messages, model=None) -> AsyncIterator[str]:
 
 async def gemini_models(): return [m.strip() for m in settings.gemini_models.split(",") if m.strip()]
 
-async def gemini_chat(messages, model=None):
-    if not settings.gemini_api_key: raise ProviderError("GEMINI_API_KEY is not configured")
+# Owner whose task is running. Set by the task runner before it starts execute_task, so the
+# router can read that owner's saved provider keys without changing every call signature.
+_owner_ctx: ContextVar[int | None] = ContextVar("phoenix_owner_id", default=None)
+
+def set_owner_context(owner_id: int | None) -> None:
+    _owner_ctx.set(owner_id)
+
+def _keys_for(owner: int) -> dict:
+    try:
+        from app import settings_store
+        return settings_store.list_provider_keys(owner)
+    except Exception as exc:
+        log.warning("could not read saved provider keys: %s", type(exc).__name__)
+        return {}
+
+def _user_keys() -> dict:
+    owner = _owner_ctx.get()
+    return _keys_for(owner) if owner is not None else {}
+
+FALLBACK_ORDER = ("gemini", "openai", "anthropic")
+
+async def gemini_chat(messages, model=None, api_key=None):
+    key = api_key or settings.gemini_api_key
+    if not key: raise ProviderError("Gemini key is not saved. Add it in Settings to use Gemini.")
     chosen_model = model or settings.gemini_model
     try:
         async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
-            response = await client.post(f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent", params={"key": settings.gemini_api_key}, json={"contents": [{"role": "user", "parts": [{"text": _prompt(messages)}]}], "generationConfig": {"temperature": 0.2}})
+            response = await client.post(f"https://generativelanguage.googleapis.com/v1beta/models/{chosen_model}:generateContent", params={"key": key}, json={"contents": [{"role": "user", "parts": [{"text": _prompt(messages)}]}], "generationConfig": {"temperature": 0.2}})
         _raise_upstream(response, "Gemini")
         data = response.json(); return data["candidates"][0]["content"]["parts"][0]["text"]
     except ProviderError: raise
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Gemini response did not contain generated text: {type(exc).__name__}") from exc
 
-async def available_models():
+OPENAI_MODEL_DEFAULT = "gpt-4o-mini"
+ANTHROPIC_MODEL_DEFAULT = "claude-3-5-haiku-latest"
+
+async def openai_chat(messages, model=None, api_key=None):
+    if not api_key: raise ProviderError("OpenAI key is not saved. Add it in Settings to use OpenAI.")
+    try:
+        async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
+            response = await client.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {api_key}"}, json={"model": model or OPENAI_MODEL_DEFAULT, "messages": [{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]})
+        _raise_upstream(response, "OpenAI")
+        return response.json()["choices"][0]["message"]["content"]
+    except ProviderError: raise
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"OpenAI response did not contain generated text: {type(exc).__name__}") from exc
+
+async def anthropic_chat(messages, model=None, api_key=None):
+    if not api_key: raise ProviderError("Anthropic key is not saved. Add it in Settings to use Claude.")
+    system = "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "system")
+    convo = [{"role": "assistant" if m.get("role") == "assistant" else "user", "content": str(m.get("content", ""))} for m in messages if m.get("role") != "system"] or [{"role": "user", "content": _prompt(messages)}]
+    payload = {"model": model or ANTHROPIC_MODEL_DEFAULT, "max_tokens": 4096, "messages": convo}
+    if system: payload["system"] = system
+    try:
+        async with httpx.AsyncClient(timeout=settings.gemini_timeout_seconds) as client:
+            response = await client.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"}, json=payload)
+        _raise_upstream(response, "Anthropic")
+        return "".join(b.get("text", "") for b in response.json()["content"] if b.get("type") == "text")
+    except ProviderError: raise
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"Anthropic response did not contain generated text: {type(exc).__name__}") from exc
+
+_USER_CHAT = {"gemini": gemini_chat, "openai": openai_chat, "anthropic": anthropic_chat}
+
+async def available_models(owner_id: int | None = None):
     result = {"providers": [], "default_provider": "primary", "default_model": settings.primary_model}
     try:
         models = await primary_models(); result["providers"].append({"id":"primary","label":"Phoenix AI Router","available":True,"models":[{"id":m,"label":m} for m in models]})
     except Exception as exc:
         result["providers"].append({"id":"primary","label":"Phoenix AI Router","available":False,"error":str(exc)[:180],"models":[]})
-    gemini = await gemini_models(); result["providers"].append({"id":"gemini","label":"Google Gemini","available":bool(settings.gemini_api_key),"error":None if settings.gemini_api_key else "GEMINI_API_KEY is not configured","models":[{"id":m,"label":m} for m in gemini]})
+    saved = _user_keys() if owner_id is None else _keys_for(owner_id)
+    labels = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic"}
+    for pid in FALLBACK_ORDER:
+        has = pid in saved
+        result["providers"].append({"id": pid, "label": labels[pid], "available": has, "error": None if has else "Add your own key in Settings to enable", "models": []})
     result["providers"].append({"id":"auto","label":"Automatic fallback","available":True,"models":[{"id":"","label":"Use configured defaults"}]})
     return result
 
-async def chat(messages, provider="auto", model=None):
-    provider = (provider or "auto").lower()
-    if provider == "primary":
-        selected = await _validated_primary_model(model); return await primary_chat(messages, selected), "primary", selected
-    if provider == "gemini": return await gemini_chat(messages, model), "gemini", model or settings.gemini_model
-    if provider != "auto": raise ProviderError("Unsupported provider. Choose primary, gemini, or auto.")
-    # Auto mode: walk a small model chain so one rate-limited or flaky model
-    # doesn't kill the run. The requested model goes first, then the rest.
+async def _primary_chain(messages, model):
     chain: list[str] = []
     preferred = model or settings.primary_model
     try:
@@ -217,11 +275,30 @@ async def chat(messages, provider="auto", model=None):
             chain_errors.append(f"{candidate}: {exc}")
             text = str(exc)
             if 'HTTP 429' not in text and 'HTTP 50' not in text: break
-    try:
+    detail = f" ({'; '.join(chain_errors)})" if chain_errors else ""
+    raise ProviderError(f"Phoenix AI failed{detail}")
+
+async def chat(messages, provider="auto", model=None):
+    provider = (provider or "auto").lower()
+    if provider == "primary":
         selected = await _validated_primary_model(model); return await primary_chat(messages, selected), "primary", selected
+    if provider in _USER_CHAT:
+        key = _user_keys().get(provider)
+        if not key: raise ProviderError(f"{provider} key is not saved. Add it in Settings to use {provider}.")
+        return await _USER_CHAT[provider](messages, model, key), provider, model or ""
+    if provider != "auto": raise ProviderError("Unsupported provider. Choose primary, gemini, openai, anthropic, or auto.")
+    # Auto: Phoenix AI only (model chain, then retries), then user-saved providers in order.
+    try:
+        return await _primary_chain(messages, model)
     except Exception as primary_error:
-        if not settings.gemini_api_key:
-            detail = f" ({'; '.join(chain_errors)})" if chain_errors else ""
-            raise ProviderError(f"Phoenix AI failed; Gemini is not configured: {primary_error}{detail}") from primary_error
-        try: return await gemini_chat(messages), "gemini", settings.gemini_model
-        except Exception as fallback_error: raise ProviderError(f"Both providers failed. Phoenix AI={primary_error}; Gemini={fallback_error}") from fallback_error
+        saved = _user_keys()
+        fallback_errors: list[str] = []
+        for pid in FALLBACK_ORDER:
+            if pid not in saved: continue
+            try:
+                return await _USER_CHAT[pid](messages, None, saved[pid]), pid, ""
+            except Exception as exc:
+                fallback_errors.append(f"{pid}: {exc}")
+        if not fallback_errors:
+            raise ProviderError(f"{primary_error}") from primary_error
+        raise ProviderError(f"Phoenix AI failed: {primary_error}; saved providers failed: {'; '.join(fallback_errors)}") from primary_error

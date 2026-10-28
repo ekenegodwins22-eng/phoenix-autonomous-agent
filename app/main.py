@@ -11,7 +11,7 @@ from app.models import TaskRequest, TaskStatus, TaskMessage, TaskMessageRequest,
 from app.agent.execution_loop import HumanInterventionRequired, TaskBlocked, TaskIncomplete, execute_task
 from app.auth import AuthPayload, current_user, login_user, register_user
 from app.mailbox import mailbox
-from app.providers import available_models
+from app.providers import available_models, set_owner_context
 from app.browser import browser
 from app.runtime import resource_status, browser_installation_status
 from app.agent.task_manager import task_manager as task_store
@@ -177,7 +177,7 @@ async def alias_messages(alias_id: str, user=Depends(current_user)):
 @app.get("/models")
 async def models(user=Depends(current_user)):
     """Return selectable models for the authenticated workspace."""
-    return await available_models()
+    return await available_models(user['id'])
 
 @app.post("/tasks", response_model=TaskStatus, status_code=202)
 async def create_task(request: TaskRequest, user=Depends(current_user)):
@@ -285,6 +285,7 @@ async def run_task(task_id: str):
             'max_steps': owner_cfg['agent'].get('max_steps'),
             'browser': dict(owner_cfg['browser']),
         })
+        set_owner_context(item['owner_id'])
         await clock.acquire()
         try:
             if task_store.is_cancel_requested(task_id):
@@ -644,6 +645,31 @@ async def get_owner_settings(user=Depends(current_user)):
 @app.put('/settings')
 async def put_owner_settings(body: OwnerSettings, user=Depends(current_user)):
     return settings_store.save_settings(user['id'], body.model_dump())
+
+
+@app.get('/settings/provider-keys')
+async def get_provider_keys(user=Depends(current_user)):
+    """Masked status of optional provider keys (Gemini, OpenAI, Anthropic). Keys are never returned."""
+    saved = settings_store.provider_key_status(user['id'])
+    return {p: saved.get(p, {'saved': False, 'hint': None}) for p in settings_store.PROVIDER_KEY_NAMES}
+
+
+class ProviderKeyBody(BaseModel):
+    provider: str
+    api_key: str = ''
+
+
+@app.put('/settings/provider-keys')
+async def put_provider_key(body: ProviderKeyBody, user=Depends(current_user)):
+    """Save or clear (empty api_key) one optional fallback provider key for this owner."""
+    provider = body.provider.lower().strip()
+    if provider not in settings_store.PROVIDER_KEY_NAMES:
+        raise HTTPException(status_code=400, detail='Unsupported provider. Choose gemini, openai, or anthropic.')
+    if body.api_key.strip():
+        settings_store.save_provider_key(user['id'], provider, body.api_key)
+    else:
+        settings_store.delete_provider_key(user['id'], provider)
+    return {p: v for p, v in settings_store.provider_key_status(user['id']).items()} | {'provider': provider}
 
 
 @app.get('/config/export')

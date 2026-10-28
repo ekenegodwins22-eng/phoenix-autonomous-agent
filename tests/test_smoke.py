@@ -405,7 +405,7 @@ def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
     seen = []
     def handler(request):
         seen.append((request.method, request.url.path, request.headers.get('x-api-key'), request.content))
-        if request.url.path == '/available-models':
+        if request.url.path == '/models':
             return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
         if request.url.path == '/chat':
             return httpx.Response(200, json={'response': 'complete'})
@@ -425,7 +425,7 @@ def test_phoenix_chat_and_stream_use_custom_routes_and_auth(monkeypatch):
         pieces = [piece async for piece in providers.primary_chat_stream(messages, 'live-model')]
         assert pieces == ['streamed']
     asyncio.run(run())
-    assert [path for _, path, _, _ in seen] == ['/available-models', '/chat', '/available-models', '/chat/stream']
+    assert [path for _, path, _, _ in seen] == ['/models', '/chat', '/models', '/chat/stream']
     assert all(key == 'test-secret' for _, _, key, _ in seen)
 
 
@@ -435,7 +435,7 @@ def test_phoenix_chat_retries_transient_502_with_bounded_backoff(monkeypatch):
     from app import config, providers
     calls = {'chat': 0}
     def handler(request):
-        if request.url.path == '/available-models':
+        if request.url.path == '/models':
             return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
         if request.url.path == '/chat':
             calls['chat'] += 1
@@ -460,7 +460,7 @@ def test_phoenix_chat_does_not_retry_authentication_errors(monkeypatch):
     from app import config, providers
     calls = {'chat': 0}
     def handler(request):
-        if request.url.path == '/available-models':
+        if request.url.path == '/models':
             return httpx.Response(200, json={'models': [{'id': 'live-model'}]})
         calls['chat'] += 1
         return httpx.Response(401, json={'detail': 'Not authenticated'})

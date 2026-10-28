@@ -7,7 +7,7 @@ def test_provider_502_identifies_selected_model(monkeypatch):
     from app import config, providers
 
     def handler(request):
-        if request.url.path == '/available-models':
+        if request.url.path == '/models':
             return httpx.Response(200, json={'models': [{'id': 'bad-model'}]})
         return httpx.Response(502, text='error code: 502')
 
@@ -82,3 +82,68 @@ def test_task_status_exposes_redacted_checkpoint():
     from app.models import TaskStatus, now_utc
     task = TaskStatus(id='task', instruction='Inspect', status='completed', created_at=now_utc(), updated_at=now_utc(), checkpoint='{"action":"done","verified":true}')
     assert 'verified' in task.checkpoint
+
+
+def test_model_discovery_404_falls_back_to_primary_model_only(monkeypatch):
+    import httpx
+    from app import config, providers
+
+    def handler(request):
+        return httpx.Response(404, text='not found')
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    assert asyncio.run(providers.primary_models()) == ['qwen2.5:0.5b']
+
+
+def test_auto_chat_never_uses_gemini_without_a_saved_key(monkeypatch):
+    import httpx
+    from app import config, providers
+
+    def handler(request):
+        if request.url.path == '/v1/models':
+            return httpx.Response(200, json={'data': [{'id': 'qwen2.5:0.5b'}]})
+        return httpx.Response(500, text='boom')
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
+    monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
+    monkeypatch.setattr(config.settings, 'gemini_api_key', '')
+    monkeypatch.setattr(providers, '_user_keys', lambda: {})
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    try:
+        asyncio.run(providers.chat([{'role': 'user', 'content': 'hi'}], 'auto', None))
+    except providers.ProviderError as exc:
+        assert 'Gemini' not in str(exc)
+    else:
+        raise AssertionError('Expected ProviderError')
+
+
+def test_auto_chat_uses_user_saved_key_after_primary_fails(monkeypatch):
+    import httpx
+    from app import config, providers
+
+    def handler(request):
+        if request.url.host == 'ollama.test':
+            return httpx.Response(500, text='boom')
+        if request.url.host == 'api.openai.com':
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'from openai'}}]})
+        return httpx.Response(404)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(config.settings, 'primary_api_key', 'test-secret')
+    monkeypatch.setattr(config.settings, 'primary_base_url', 'http://ollama.test/v1')
+    monkeypatch.setattr(config.settings, 'primary_model', 'qwen2.5:0.5b')
+    monkeypatch.setattr(config.settings, 'primary_model_cache_seconds', 0)
+    monkeypatch.setattr(config.settings, 'primary_chat_retry_attempts', 1)
+    monkeypatch.setattr(providers, '_user_keys', lambda: {'openai': 'sk-user'})
+    monkeypatch.setattr(providers.httpx, 'AsyncClient', lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    text, used, _ = asyncio.run(providers.chat([{'role': 'user', 'content': 'hi'}], 'auto', None))
+    assert (text, used) == ('from openai', 'openai')
