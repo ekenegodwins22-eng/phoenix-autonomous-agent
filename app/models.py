@@ -15,6 +15,7 @@ class TaskRequest(BaseModel):
     effort: Literal["low", "medium", "high"] | None = None
     fast_mode: bool = False
     deep_research: bool = False
+    browser_target: Literal["remote", "local"] | None = None
 
 class BrowserSettings(BaseModel):
     headless: bool | None = None

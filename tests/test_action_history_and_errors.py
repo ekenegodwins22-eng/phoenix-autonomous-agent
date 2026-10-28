@@ -103,7 +103,7 @@ def test_incomplete_run_is_not_reported_as_verified(monkeypatch):
     monkeypatch.setattr(browser_use, 'BrowserSession', FakeSession, raising=False)
     monkeypatch.setattr(profile, 'BrowserProfile', lambda **kw: SimpleNamespace(**kw), raising=False)
     monkeypatch.setattr(adapter, 'browser_use_available', lambda: True)
-    monkeypatch.setattr(adapter, '_browser_profile_kwargs', lambda proxy_mode='direct': {})
+    monkeypatch.setattr(adapter, '_browser_profile_kwargs', lambda proxy_mode='direct', browser_target=None: {})
     monkeypatch.setattr(adapter, 'PhoenixRouterChatModel', lambda **kw: object())
 
     with pytest.raises(TaskIncomplete) as exc:

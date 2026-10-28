@@ -186,7 +186,7 @@ async def create_task(request: TaskRequest, user=Depends(current_user)):
         raise HTTPException(status_code=422, detail='Configured proxy mode requested but no protected proxy is configured')
     if request.proxy_mode == 'direct' and settings.browser_proxy_required:
         raise HTTPException(status_code=422, detail='A proxy is required by server configuration for this deployment')
-    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort, fast_mode=request.fast_mode, deep_research=request.deep_research)
+    item = task_store.create_task(owner_id=user['id'], instruction=request.instruction, start_url=request.start_url, timeout_seconds=request.timeout_seconds, provider=request.provider, model=request.model, proxy_mode=request.proxy_mode, proxy_identifier=proxy.get('identifier') if proxy else None, effort=request.effort, fast_mode=request.fast_mode, deep_research=request.deep_research, browser_target=request.browser_target)
     asyncio.create_task(start_task(item['id']))
     return snapshot(item)
 
@@ -276,7 +276,7 @@ async def run_task(task_id: str):
             return task_store.claim_unconsumed_user_messages(task_id)
         async def save_checkpoint(checkpoint):
             task_store.save_checkpoint(task_id, checkpoint)
-        request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct')
+        request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct', browser_target=item.get('browser_target'))
         owner_cfg = settings_store.get_settings(item['owner_id'])
         run_opts.run_options.set({
             'fast_mode': bool(item.get('fast_mode')),
@@ -291,7 +291,7 @@ async def run_task(task_id: str):
                 raise asyncio.CancelledError()
             # The global lock is held only while actively executing. It is released during a
             # human pause (clock.pause) so other tasks are not blocked by a waiting person.
-            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume))
+            execution = asyncio.create_task(execute_task(request.instruction, request.start_url, request.provider, request.model, progress, on_waiting_human, resume_event, task_id, cancel_event, get_user_messages, save_checkpoint, request.proxy_mode, resume_from=resume_from, on_pause_started=clock.pause, on_pause_ended=clock.resume, browser_target=request.browser_target))
             result = await _run_with_active_budget(execution, clock)
         finally:
             clock.release()

@@ -126,7 +126,7 @@ def latest_frame(task_id: str) -> bytes | None:
     return _latest_frames.get(task_id)
 
 
-def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
+def _browser_profile_kwargs(proxy_mode: str = 'direct', browser_target: str | None = None) -> dict:
     """Map owner browser settings (console Browser tab) onto browser-use's BrowserProfile."""
     from app import run_options as run_opts
     bopts = run_opts.current().get('browser') or {}
@@ -147,7 +147,11 @@ def _browser_profile_kwargs(proxy_mode: str = 'direct') -> dict:
     # Unset BROWSER_WS keeps the existing local-launch behavior unchanged.
     import os
     browser_ws = (os.environ.get('BROWSER_WS') or '').strip()
-    if browser_ws:
+    # Per-task target from the console: 'local' always launches locally, 'remote' attaches to BROWSER_WS.
+    # A missing/unknown target keeps the env-based behavior above.
+    if browser_target == 'local':
+        kwargs.pop('cdp_url', None)
+    elif browser_ws:
         kwargs['cdp_url'] = browser_ws
     return kwargs
 
@@ -277,6 +281,7 @@ async def execute_browser_use_task(
     cancel_event=None,
     proxy_mode: str = 'direct',
     task_id: str | None = None,
+    browser_target: str | None = None,
 ):
     """Run the vendored browser-use Agent inside Phoenix's task wrapper."""
     if not browser_use_available():
@@ -286,7 +291,7 @@ async def execute_browser_use_task(
     from app import run_options as run_opts
 
     opts = run_opts.current()
-    session = BrowserSession(browser_profile=BrowserProfile(**_browser_profile_kwargs(proxy_mode)))
+    session = BrowserSession(browser_profile=BrowserProfile(**_browser_profile_kwargs(proxy_mode, browser_target)))
     task = instruction if not start_url else f'{instruction}\nStart at this URL: {start_url}'
     llm = PhoenixRouterChatModel(provider=provider, model=model)
     system_extension = phoenix_agent_instructions()

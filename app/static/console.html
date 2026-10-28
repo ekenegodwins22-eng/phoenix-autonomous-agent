@@ -276,6 +276,12 @@ label.lab:first-child{margin-top:0}
               </select>
               <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
             </label>
+            <label class="chipsel" id="homeBrowserWrap" title="Browser for the task">
+              <select id="homeBrowser" aria-label="Browser">
+                <option value="remote">Remote browser (worker)</option><option value="local">Local browser</option>
+              </select>
+              <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </label>
             <button class="ib round" id="homeDeep" type="button" aria-pressed="false" aria-label="Deep research" title="Deep research: longer run, structured report">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
             </button>
@@ -513,7 +519,7 @@ let logsOpen=false;
 let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
-const cfg={model:'auto|',effort:'',fast:false,deep:false};
+const cfg={model:'auto|',effort:'',fast:false,deep:false,browser:'remote'};
 
 async function api(path,opts={}){
   const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
@@ -828,6 +834,7 @@ $('taskFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles();setToggle($('taskFas
 $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
 $('taskModel').onchange=()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task'};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
+$('homeBrowser').onchange=()=>{cfg.browser=$('homeBrowser').value};
 $('homeSubmit').onclick=async()=>{
   $('homeErr').textContent='';
   const instruction=$('homeInstruction').value.trim();
@@ -835,6 +842,7 @@ $('homeSubmit').onclick=async()=>{
   const [provider,model]=cfg.model.split('|');
   const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
   if(cfg.effort)body.effort=cfg.effort;
+  body.browser_target=cfg.browser;
   if(cfg.fast)body.fast_mode=true;
   if(cfg.deep)body.deep_research=true;
   if(model)body.model=model;
