@@ -355,6 +355,39 @@ _USER_CHAT = {"gemini": gemini_chat, "openai": openai_chat, "anthropic": anthrop
 _USER_LABELS = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Anthropic", "agentrouter": "AgentRouter"}
 
 
+RELAY_MODELS = {
+    "nvidia/nemotron-3-ultra-550b-a55b:free": "Nemotron 3 Ultra 550B (big smart one)",
+    "nvidia/nemotron-3.5-super-vl:free": "Nemotron 3.5 Super VL (thorough agent)",
+    "nvidia/nemotron-3.5-lightning:free": "Nemotron 3.5 Lightning (speed demon)",
+    "cohere/north-mini-code:free": "Cohere North Mini Code (precise + fast)",
+}
+
+async def relay_chat(messages, model=None):
+    """Chat via the FastAPI Phoenix AI Router (its own /chat route, x-api-key auth)."""
+    base = _normalize_base(settings.fastapi_relay_base_url)
+    if not base:
+        raise ProviderError("FastAPI relay base URL is not configured")
+    if not settings.fastapi_relay_api_key:
+        raise ProviderError("FastAPI relay key is not configured (set FASTAPI_RELAY_API_KEY)")
+    # flatten messages to one prompt; the relay takes a single message string
+    prompt = "\n\n".join(str(m.get("content", "")) for m in messages if m.get("role") in ("system", "user", "assistant"))
+    payload = {"message": prompt}
+    if model:
+        payload["model"] = model
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(f"{base}/chat", headers={"x-api-key": settings.fastapi_relay_api_key, "Content-Type": "application/json"}, json=payload)
+        _raise_upstream(response, "request", label="FastAPI relay")
+        data = response.json()
+        text = data.get("response") if isinstance(data, dict) else None
+        if not text:
+            raise ProviderError("FastAPI relay response did not contain generated text")
+        return text
+    except ProviderError: raise
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        raise ProviderError(f"FastAPI relay request failed: {type(exc).__name__}") from exc
+
+
 async def available_models(owner_id: int | None = None):
     default_provider = "ollama"
     result = {"providers": [], "default_provider": default_provider, "default_model": settings.ollama_model}
@@ -371,6 +404,8 @@ async def available_models(owner_id: int | None = None):
             result["providers"].append({"id": engine, "label": label, "available": True, "models": [{"id": m, "label": m} for m in models]})
         else:
             result["providers"].append({"id": engine, "label": label, "available": False, "error": str(exc)[:180], "models": []})
+    if settings.fastapi_relay_api_key:
+        result["providers"].append({"id": "fastapi", "label": "FastAPI Relay", "available": True, "models": [{"id": m, "label": l} for m, l in RELAY_MODELS.items()]})
     saved = _user_keys() if owner_id is None else _keys_for(owner_id)
     for pid in FALLBACK_ORDER:
         has = pid in saved
@@ -416,8 +451,13 @@ async def chat(messages, provider=None, model=None):
         raise ProviderError("No model selected. Pick a model in the console before starting a task; automatic fallback is disabled.")
     if provider in LOCAL_ENGINES:
         return await engine_chat(provider, messages, model), provider, model or _engine_config(provider)[2]
+    if provider == "fastapi":
+        model = model if model in RELAY_MODELS else None
+        if not model:
+            raise ProviderError("Pick one of the four FastAPI relay models: " + ", ".join(RELAY_MODELS))
+        return await relay_chat(messages, model), provider, model
     if provider in _USER_CHAT:
         key = _user_keys().get(provider) or _env_key(provider)
         if not key: raise ProviderError(f"{provider} key is not saved. Add it in Settings to use {provider}.")
         return await _USER_CHAT[provider](messages, model, key), provider, model or ""
-    raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, or agentrouter.")
+    raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, fastapi, gemini, openai, anthropic, or agentrouter.")

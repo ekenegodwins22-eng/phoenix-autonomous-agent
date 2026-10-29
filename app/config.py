@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     agentrouter_base_url: str = "https://agentrouter.org/v1"
     agentrouter_api_key: str = ""
     agentrouter_model: str = "gpt-4o-mini"
+    fastapi_relay_base_url: str = "https://fastapi.senseiphoenix.name.ng"
+    fastapi_relay_api_key: str = ""
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     gemini_models: str = "gemini-2.5-flash,gemini-2.5-pro"

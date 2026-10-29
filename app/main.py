@@ -256,7 +256,7 @@ def _task_choice(task_id: str, default_provider: str, default_model: str | None)
 
 
 class TaskModelRequest(BaseModel):
-    provider: Literal["ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"]
+    provider: Literal["ollama", "llamacpp", "smollm2", "fastapi", "gemini", "openai", "anthropic", "agentrouter"]
     model: str | None = Field(default=None, max_length=160)
 
 
