@@ -375,13 +375,32 @@ async def relay_chat(messages, model=None):
     if model:
         payload["model"] = model
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(f"{base}/chat", headers={"x-api-key": settings.fastapi_relay_api_key, "Content-Type": "application/json"}, json=payload)
-        _raise_upstream(response, "request", label="FastAPI relay")
-        data = response.json()
-        text = data.get("response") if isinstance(data, dict) else None
+        async with httpx.AsyncClient(timeout=180) as client:
+            # /chat sometimes 502s upstream; /chat/stream is the reliable route. Stream and join.
+            chunks: list[str] = []
+            async with client.stream("POST", f"{base}/chat/stream", headers={"x-api-key": settings.fastapi_relay_api_key, "Content-Type": "application/json"}, json=payload) as response:
+                _raise_upstream(response, "request", label="FastAPI relay")
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    piece = None
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                        if line == "[DONE]":
+                            break
+                        try:
+                            parsed = __import__("json").loads(line)
+                            piece = parsed.get("response") or parsed.get("delta") or parsed.get("content") or parsed.get("token") or (parsed.get("choices") or [{}])[0].get("delta", {}).get("content") if isinstance(parsed, dict) else None
+                        except ValueError:
+                            piece = line
+                    else:
+                        piece = line
+                    if piece:
+                        chunks.append(str(piece))
+        text = "".join(chunks).strip()
         if not text:
-            raise ProviderError("FastAPI relay response did not contain generated text")
+            raise ProviderError("FastAPI relay stream returned no text")
         return text
     except ProviderError: raise
     except (httpx.HTTPError, ValueError, KeyError) as exc:
