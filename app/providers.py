@@ -88,7 +88,7 @@ def _extract_model_ids(data) -> list[str]:
     return found
 
 
-async def engine_models(engine: str) -> list[str]:
+async def engine_models(engine: str, timeout_seconds: float | None = None) -> list[str]:
     """List models via GET {base}/v1/models. Raises ProviderError if the engine is not usable."""
     label = ENGINE_LABELS[engine]
     base, key, default_model = _engine_config(engine)
@@ -103,7 +103,7 @@ async def engine_models(engine: str) -> list[str]:
     last_error: ProviderError | None = None
     for attempt in range(attempts):
         try:
-            async with httpx.AsyncClient(timeout=min(settings.primary_timeout_seconds, 20)) as client:
+            async with httpx.AsyncClient(timeout=timeout_seconds or min(settings.primary_timeout_seconds, 20)) as client:
                 response = await client.get(_engine_url(engine, "models"), headers=_engine_headers(engine))
             if response.status_code == 404 and default_model:
                 # Engine without a /v1/models route: trust the configured model instead.
@@ -358,12 +358,18 @@ _USER_LABELS = {"gemini": "Google Gemini", "openai": "OpenAI", "anthropic": "Ant
 async def available_models(owner_id: int | None = None):
     default_provider = "ollama"
     result = {"providers": [], "default_provider": default_provider, "default_model": settings.ollama_model}
-    for engine in LOCAL_ENGINES:
-        label = ENGINE_LABELS[engine]
+    async def probe(engine):
         try:
-            models = await engine_models(engine)
-            result["providers"].append({"id": engine, "label": label, "available": True, "models": [{"id": m, "label": m} for m in models]})
+            models = await engine_models(engine, timeout_seconds=4)
         except Exception as exc:
+            return engine, None, exc
+        return engine, models, None
+    probes = await asyncio.gather(*(probe(e) for e in LOCAL_ENGINES))
+    for engine, models, exc in probes:
+        label = ENGINE_LABELS[engine]
+        if models is not None:
+            result["providers"].append({"id": engine, "label": label, "available": True, "models": [{"id": m, "label": m} for m in models]})
+        else:
             result["providers"].append({"id": engine, "label": label, "available": False, "error": str(exc)[:180], "models": []})
     saved = _user_keys() if owner_id is None else _keys_for(owner_id)
     for pid in FALLBACK_ORDER:
