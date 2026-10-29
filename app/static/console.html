@@ -554,7 +554,7 @@ let logsOpen=false;
 let detailTimer=null,listTimer=null,detailBusy=false,listBusy=false;
 let shotUrl=null;
 let catalog=[];
-const cfg={model:'auto|',effort:'',fast:false,deep:false,browser:'remote',proxy_id:null};
+const cfg={model:'',effort:'',fast:false,deep:false,browser:'remote',proxy_id:null};
 
 async function api(path,opts={}){
   const headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
@@ -871,7 +871,7 @@ $('runDeep').onchange=()=>{cfg.deep=$('runDeep').checked;syncToggles()};
 $('taskFast').onclick=()=>{cfg.fast=!cfg.fast;syncToggles();setToggle($('taskFast'),cfg.fast)};
 $('homeModel').onchange=()=>{cfg.model=$('homeModel').value;updateProv()};
 $('taskModel').onchange=async()=>{cfg.model=$('taskModel').value;updateProv();$('taskModel').parentElement.title='Model for the next task';
-  const t=detail||{};if(t.id&&RUN.includes(t.status)){try{const pv=cfg.model.split('|');await api('/tasks/'+encodeURIComponent(t.id)+'/model',{method:'PUT',body:JSON.stringify({provider:pv[0]||'auto',model:pv[1]||null})});}catch(e){}}};
+  const t=detail||{};if(t.id&&RUN.includes(t.status)){try{if(!cfg.model)return;const pv=cfg.model.split('|');await api('/tasks/'+encodeURIComponent(t.id)+'/model',{method:'PUT',body:JSON.stringify({provider:pv[0],model:pv[1]||null})});}catch(e){}}};
 $('homeEffort').onchange=()=>{cfg.effort=$('homeEffort').value};
 $('homeBrowser').onchange=()=>{cfg.browser=$('homeBrowser').value};
 $('homeProxy').onchange=()=>{cfg.proxy_id=$('homeProxy').value?Number($('homeProxy').value):null};
@@ -880,8 +880,9 @@ $('homeSubmit').onclick=async()=>{
   $('homeErr').textContent='';
   const instruction=$('homeInstruction').value.trim();
   if(instruction.length<3){$('homeErr').textContent='Describe the task (at least 3 characters).';return}
+  if(!cfg.model){$('homeErr').textContent='Select a model first.';return}
   const [provider,model]=cfg.model.split('|');
-  const body={instruction,provider:provider||'auto',proxy_mode:$('proxyMode').value};
+  const body={instruction,provider:provider||'',proxy_mode:$('proxyMode').value};
   if(cfg.effort)body.effort=cfg.effort;
   body.browser_target=cfg.browser;
   if(cfg.proxy_id){body.proxy_id=cfg.proxy_id;body.proxy_mode='configured'}
@@ -907,28 +908,24 @@ function updateProv(){
   $('homeProv').textContent=letter;$('taskProv').textContent=letter;
 }
 function fillModelSelect(sel){
-  if(!catalog.length)catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
+  
   const groups={};
   catalog.forEach(c=>{(groups[c.provLabel]=groups[c.provLabel]||[]).push(c)});
-  sel.innerHTML=Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(c=>'<option value="'+esc(c.value)+'"'+(c.value===cfg.model?' selected':'')+'>'+esc(c.label)+'</option>').join('')+'</optgroup>').join('');
+  sel.innerHTML='<option value=""'+(cfg.model?'':' selected')+'>select a model</option>'+Object.keys(groups).map(g=>'<optgroup label="'+esc(g)+'">'+groups[g].map(c=>'<option value="'+esc(c.value)+'"'+(c.value===cfg.model?' selected':'')+'>'+esc(c.label)+'</option>').join('')+'</optgroup>').join('');
 }
 async function loadCatalog(){
   try{
     const d=await api('/models');
     const provs=d.providers||[];
-    catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
     provs.forEach(p=>{
       if(p.id==='auto'||!p.available)return;
       (p.models||[]).forEach(m=>{if(m.id)catalog.push({value:p.id+'|'+m.id,label:m.label||m.id,prov:p.id,provLabel:p.label||p.id})});
     });
-    const preferred=d.default_provider&&d.default_model?d.default_provider+'|'+d.default_model:null;
-    if(preferred&&catalog.some(c=>c.value===preferred)&&cfg.model==='auto|')cfg.model=preferred;
     const offline=provs.filter(p=>!p.available).map(p=>p.label+' unavailable'+(p.error?' ('+p.error+')':''));
     $('modelsInfo').innerHTML=catalog.length>1
       ?'<div class="chips">'+catalog.filter(c=>c.value!=='auto|').map(c=>'<span class="chip">'+esc(c.label)+'</span>').join('')+'</div>'+(offline.length?'<div class="hint">'+esc(offline.join('; '))+'</div>':'')
       :'No models returned by the server.'+(offline.length?' '+esc(offline.join('; ')):'');
   }catch(err){
-    catalog=[{value:'auto|',label:'Automatic fallback',prov:'auto',provLabel:'Automatic'}];
     $('modelsInfo').textContent=err.message;
   }
   fillModelSelect($('homeModel'));
@@ -1076,7 +1073,7 @@ $('cfgExport').onclick=async()=>{
 function draftFromHome(){
   const instruction=$('homeInstruction').value.trim();
   const [provider,model]=cfg.model.split('|');
-  const d={instruction:instruction.length>=3?instruction:'Describe the task here',provider:provider||'auto',proxy_mode:$('proxyMode').value,fast_mode:cfg.fast,deep_research:cfg.deep};
+  const d={instruction:instruction.length>=3?instruction:'Describe the task here',provider:provider||'',proxy_mode:$('proxyMode').value,fast_mode:cfg.fast,deep_research:cfg.deep};
   if(cfg.effort)d.effort=cfg.effort;if(model)d.model=model;
   const su=$('startUrl').value.trim();if(su)d.start_url=su;
   const to=$('timeout').value.trim();if(to)d.timeout_seconds=Number(to);

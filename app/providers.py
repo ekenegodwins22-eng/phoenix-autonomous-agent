@@ -369,7 +369,6 @@ async def available_models(owner_id: int | None = None):
     for pid in FALLBACK_ORDER:
         has = pid in saved
         result["providers"].append({"id": pid, "label": _USER_LABELS[pid], "available": has, "error": None if has else "Add your own key in Settings to enable", "models": []})
-    result["providers"].append({"id": "auto", "label": "Automatic fallback", "available": True, "models": [{"id": "", "label": "Use configured defaults"}]})
     return result
 
 
@@ -405,33 +404,14 @@ async def _local_chain(messages, model):
     return None, errors, None
 
 
-async def chat(messages, provider="auto", model=None):
-    provider = (provider or "auto").lower()
-    if provider == "primary":
-        # Legacy value from stored tasks/clients: the old Phoenix router is no longer a provider.
-        provider = "auto"
+async def chat(messages, provider=None, model=None):
+    provider = (provider or "").lower()
+    if provider in ("", "auto", "primary"):
+        raise ProviderError("No model selected. Pick a model in the console before starting a task; automatic fallback is disabled.")
     if provider in LOCAL_ENGINES:
         return await engine_chat(provider, messages, model), provider, model or _engine_config(provider)[2]
     if provider in _USER_CHAT:
         key = _user_keys().get(provider) or _env_key(provider)
         if not key: raise ProviderError(f"{provider} key is not saved. Add it in Settings to use {provider}.")
         return await _USER_CHAT[provider](messages, model, key), provider, model or ""
-    if provider != "auto":
-        raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, agentrouter, or auto.")
-    text, engine_or_errors, used_model = await _local_chain(messages, model)
-    if text is not None:
-        return text, engine_or_errors, used_model
-    local_errors = engine_or_errors
-    saved = _user_keys()
-    fallback_errors: list[str] = []
-    for pid in FALLBACK_ORDER:
-        key = saved.get(pid) or _env_key(pid)
-        if not key: continue
-        try:
-            return await _USER_CHAT[pid](messages, None, key), pid, ""
-        except Exception as exc:
-            fallback_errors.append(f"{pid}: {exc}")
-    local_text = "; ".join(local_errors) if local_errors else "no local engine is configured"
-    if not fallback_errors:
-        raise ProviderError(f"No local model engine answered ({local_text}). Set OLLAMA_BASE_URL, LLAMACPP_BASE_URL or SMOLLM2_BASE_URL, or save your own provider key in Settings.")
-    raise ProviderError(f"No local model engine answered ({local_text}); saved keys failed: {'; '.join(fallback_errors)}")
+    raise ProviderError("Unsupported provider. Choose ollama, llamacpp, smollm2, gemini, openai, anthropic, or agentrouter.")

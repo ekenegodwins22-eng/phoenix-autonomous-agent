@@ -252,11 +252,11 @@ async def create_task(request: TaskRequest, user=Depends(current_user)):
 def _task_choice(task_id: str, default_provider: str, default_model: str | None):
     """Current provider/model for a task: the user's latest pick, else the task's stored choice."""
     row = task_store.get_task(task_id) or {}
-    return (row.get('provider') or default_provider or 'auto'), (row.get('model') or default_model)
+    return (row.get('provider') or default_provider), (row.get('model') or default_model)
 
 
 class TaskModelRequest(BaseModel):
-    provider: Literal["auto", "ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"] = "auto"
+    provider: Literal["ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"]
     model: str | None = Field(default=None, max_length=160)
 
 
@@ -355,7 +355,10 @@ async def run_task(task_id: str):
             return task_store.claim_unconsumed_user_messages(task_id)
         async def save_checkpoint(checkpoint):
             task_store.save_checkpoint(task_id, checkpoint)
-        request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider') or 'auto', model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct', browser_target=item.get('browser_target'))
+        if not item.get('provider'):
+            task_store.set_state(task_id, 'failed', progress='No model selected. Pick a model in the console and re-run the task; automatic fallback is disabled.')
+            return
+        request = TaskRequest(instruction=item['instruction'], start_url=item.get('start_url'), timeout_seconds=item.get('timeout_seconds'), provider=item.get('provider'), model=item.get('model'), proxy_mode=item.get('proxy_mode') or 'direct', browser_target=item.get('browser_target'))
         run_proxy = proxy_store.resolve_for_run(item['owner_id'], item['proxy_id']) if item.get('proxy_id') else None
         owner_cfg = settings_store.get_settings(item['owner_id'])
         run_opts.run_options.set({
