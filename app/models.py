@@ -9,7 +9,7 @@ class TaskRequest(BaseModel):
     instruction: str = Field(min_length=3, max_length=8000)
     start_url: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=10, le=3600)
-    provider: Literal["auto", "primary", "ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"] = "auto"
+    provider: Literal["ollama", "llamacpp", "smollm2", "fastapi", "gemini", "openai", "anthropic", "agentrouter"]
     model: str | None = Field(default=None, min_length=1, max_length=160)
     proxy_mode: Literal["direct", "configured"] = "direct"
     proxy_id: int | None = None
@@ -37,7 +37,7 @@ class TaskDraft(BaseModel):
     instruction: str = Field(min_length=3, max_length=8000)
     start_url: str | None = None
     timeout_seconds: int | None = Field(default=None, ge=10, le=3600)
-    provider: Literal["auto", "primary", "ollama", "llamacpp", "smollm2", "gemini", "openai", "anthropic", "agentrouter"] = "auto"
+    provider: Literal["ollama", "llamacpp", "smollm2", "fastapi", "gemini", "openai", "anthropic", "agentrouter"]
     model: str | None = Field(default=None, max_length=160)
     proxy_mode: Literal["direct", "configured"] = "direct"
     effort: Literal["low", "medium", "high"] | None = None
