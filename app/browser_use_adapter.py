@@ -389,6 +389,7 @@ async def execute_browser_use_task(
     agent = Agent(
         task=task,
         llm=llm,
+        llm_timeout=240,
         browser_session=session,
         extend_system_message=system_extension,
         max_failures=settings.model_action_retries + 1,
